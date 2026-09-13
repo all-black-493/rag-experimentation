@@ -21,6 +21,22 @@ services:
       retries: 10
       start_period: 10s
 
+  # Opt-in: `docker compose --profile scanning up -d`. Behind a profile because
+  # the signature database makes this image large and slow to become ready, and
+  # the eval workflow shouldn't pay that on every run. Set MALWARE_SCAN_ENABLED
+  # alongside it, or the app won't call the scanner.
+  clamav:
+    image: clamav/clamav:1.4
+    profiles: ["scanning"]
+    ports:
+      - "3310:3310"
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 180s
+
   app:
     build: .
     ports:
@@ -29,6 +45,11 @@ services:
       - .env
     environment:
       WEAVIATE_HOST: weaviate
+      # Passed through explicitly: a shell-level MALWARE_SCAN_ENABLED is used for
+      # compose substitution only and never reaches the container, which silently
+      # leaves scanning off when you believe you turned it on.
+      MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-false}
+      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
     volumes:
       - pdf_uploads:/app/data/uploads
     depends_on:

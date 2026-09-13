@@ -69,14 +69,27 @@ retrieve --(candidates)--> rerank --(any survive threshold?)--> generate -> veri
 ## Ingestion
 
 ```
-Document → validation → parsing → structure detection → chunking
-         → metadata enrichment → embedding → Weaviate
+upload → validate → malware scan → parse → extract structure → normalize
+       → chunk → attach provenance → embed → index
 ```
 
-Chunks are token-bounded (`tiktoken` `cl100k_base`) and never cross a PDF page boundary, so
-each one maps to exactly one page and one bounding box — what makes "jump to the cited page
-and highlight it" possible. Markdown splits on headers first; web pages have
-`script`/`style`/`nav`/`footer`/`header` stripped.
+Accepts `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.tsv`, `.json`, `.html`, `.md`, `.rst`,
+`.txt`, `.log`, plus URLs.
+
+- **Validate** — extension, size, magic bytes, UTF-8 decodability, before any parser runs.
+- **Malware scan** — clamd over TCP, **off by default** (`MALWARE_SCAN_ENABLED`); the
+  service is behind a compose profile because its signature database is slow to load:
+  `docker compose --profile scanning up -d`. When enabled and the scanner is unreachable the
+  upload is **refused**, not waved through.
+- **Normalize** — NFKC folding, invisible characters, NBSP, PDF line-break hyphenation.
+  Conservative by design: it never lowercases or restructures, because chunking and bbox
+  highlighting depend on the text still matching the source.
+- **Chunk** — token-bounded (`tiktoken` `cl100k_base`), never crossing a PDF page boundary,
+  so each chunk maps to one page and one bounding box.
+
+Ingestion is **content-addressed**: the doc id is a hash of the bytes, so re-uploading the
+same file is idempotent — it skips parsing, chunking and embedding entirely rather than
+indexing a second copy. Identical content is never re-embedded.
 
 ## Citations
 
