@@ -28,6 +28,9 @@ class _NoopObservation:
     def update(self, **kwargs: Any) -> None:
         return None
 
+    def score_trace(self, **kwargs: Any) -> None:
+        return None
+
 
 def configure_tracing(settings: Settings) -> None:
     """Initialise the Langfuse client, or leave tracing off if keys are missing."""
