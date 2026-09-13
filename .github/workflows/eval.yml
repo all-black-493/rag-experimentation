@@ -1,0 +1,54 @@
+name: Faithfulness eval
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Write app env file
+        run: |
+          cat > .env <<EOF
+          COHERE_API_KEY=${{ secrets.COHERE_API_KEY }}
+          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          EOF
+
+      - name: Start app stack
+        run: docker compose up -d --build
+
+      - name: Wait for API health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8010/health; then exit 0; fi
+            sleep 2
+          done
+          echo "API did not become healthy in time" >&2
+          docker compose logs
+          exit 1
+
+      - name: Install eval dependencies
+        working-directory: eval
+        run: uv sync
+
+      - name: Run faithfulness evaluation
+        working-directory: eval
+        run: uv run python run_eval.py --anthropic-api-key "${{ secrets.ANTHROPIC_API_KEY }}"
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval/report.json
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v

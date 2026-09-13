@@ -1,0 +1,33 @@
+[project]
+name = "rag-eval"
+version = "0.1.0"
+description = "Offline faithfulness evaluation harness for the RAG API"
+requires-python = ">=3.11"
+dependencies = [
+    "ragas==0.4.3",
+    # ragas 0.4.3 unconditionally imports langchain_community and langchain_openai at
+    # package-import time regardless of which provider you actually use. Its unpinned
+    # langchain-community requirement resolves to a version that already dropped
+    # `chat_models.vertexai` (a hard import in ragas.llms.base), and an unpinned
+    # langchain-openai needs a langchain-core newer than what langchain-community 0.3.x
+    # supports. The whole langchain-0.3.x family below is the only combination that
+    # actually imports cleanly. This is why the eval harness has its own environment
+    # instead of sharing the root app's LangChain 1.x pins.
+    "langchain>=0.3,<0.4",
+    "langchain-core>=0.3,<0.4",
+    "langchain-community>=0.3,<0.4",
+    "langchain-openai>=0.2,<0.3",
+    "langchain-anthropic>=0.3,<0.4",
+    # ragas's new `llm_factory` + `metrics.collections` path (the current-recommended
+    # API) sends `temperature` on every call via the `instructor` adapter. Claude 5
+    # models reject that ("temperature is deprecated for this model"), and the new
+    # collections LLM class has no equivalent of the legacy bypass_temperature flag.
+    # We use the legacy `LangchainLLMWrapper(..., bypass_temperature=True)` +
+    # `ragas.metrics.Faithfulness` path instead — deprecated but documented as the
+    # escape hatch for exactly this case, and verified working end-to-end.
+    "anthropic>=0.108,<1.0",
+    "httpx>=0.27",
+]
+
+[tool.ruff]
+line-length = 100
