@@ -3,6 +3,7 @@ name: Faithfulness eval
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   eval:

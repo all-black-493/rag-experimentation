@@ -38,6 +38,10 @@ def test_observation_is_usable_when_tracing_is_off():
 
     with tracing.trace(name="rag-query", session_id="tenant-1") as root:
         root.update(output={"answer": "..."})
+        # Scored on every query, so a missing no-op here would 500 any
+        # deployment running without Langfuse keys - CI included.
+        root.score_trace(name="answered", value=True, data_type="BOOLEAN")
+        root.score_trace(name="citation_coverage", value=0.5, data_type="NUMERIC")
 
 
 def test_rerank_still_filters_and_orders_with_tracing_off():
