@@ -33,6 +33,7 @@ from app.scoring import citation_coverage
 
 HEALTH_TIMEOUT_SECONDS = 60
 CONCURRENCY = 5
+JUDGE_MAX_TOKENS = 4096
 
 
 @dataclass
@@ -46,7 +47,11 @@ class SampleResult:
     faithfulness: float | None = None
     citation_coverage: float | None = None
     invalid_citations: int = 0
+    # Kept apart on purpose: `error` means the system under test failed, while
+    # `judge_error` means the measuring instrument did. Only the first is a
+    # regression; treating them alike blocks merges on judge flakiness.
     error: str | None = None
+    judge_error: str | None = None
 
 
 @dataclass
@@ -59,7 +64,13 @@ class Report:
 
     @property
     def errored(self) -> list[SampleResult]:
+        """Failures of the RAG API itself — always a gate failure."""
         return [r for r in self.results if r.error is not None]
+
+    @property
+    def judge_errored(self) -> list[SampleResult]:
+        """Samples the judge couldn't score — unknown quality, not bad quality."""
+        return [r for r in self.results if r.judge_error is not None]
 
     @property
     def answer_rate(self) -> float:
@@ -147,7 +158,7 @@ async def score_sample(
             )
             result.faithfulness = await faithfulness.single_turn_ascore(sample)
         except Exception as exc:  # noqa: BLE001 - isolate one sample's failure from the batch
-            result.error = f"faithfulness scoring failed: {exc}"
+            result.judge_error = f"faithfulness scoring failed: {exc}"
 
     return result
 
@@ -155,7 +166,14 @@ async def score_sample(
 async def run(args: argparse.Namespace) -> Report:
     dataset = load_dataset(args.dataset)
 
-    llm = ChatAnthropic(model=args.judge_model, anthropic_api_key=args.anthropic_api_key)
+    # ChatAnthropic defaults to max_tokens=1024, which ragas's faithfulness judge
+    # overruns on longer answers — it then reports "The LLM generation was not
+    # completed" and the sample goes unscored.
+    llm = ChatAnthropic(
+        model=args.judge_model,
+        anthropic_api_key=args.anthropic_api_key,
+        max_tokens=JUDGE_MAX_TOKENS,
+    )
     judge = LangchainLLMWrapper(llm, bypass_temperature=True)
     faithfulness = Faithfulness(llm=judge)
 
@@ -182,6 +200,7 @@ def write_report(report: Report, path: Path) -> None:
         "total": len(report.results),
         "answered": len(report.answered),
         "errored": len(report.errored),
+        "judge_errored": len(report.judge_errored),
         "results": [vars(r) for r in report.results],
     }
     path.write_text(json.dumps(payload, indent=2))
@@ -227,6 +246,15 @@ def print_summary(report: Report, thresholds: argparse.Namespace) -> bool:
 
     for r in report.errored:
         print(f"  ERROR {r.id}: {r.error}")
+    for r in report.judge_errored:
+        print(f"  JUDGE {r.id}: {r.judge_error}")
+
+    # A judge failure means the sample's quality is unknown, not bad. A couple of
+    # those shouldn't block a merge; many of them mean the measurement is broken
+    # and the run can't be trusted either way.
+    judge_errors = len(report.judge_errored)
+    if judge_errors:
+        print(f"judge errors:      {judge_errors} (max {thresholds.max_judge_errors})")
 
     passed_answer_rate = report.answer_rate >= thresholds.min_answer_rate
     checks = {
@@ -234,7 +262,8 @@ def print_summary(report: Report, thresholds: argparse.Namespace) -> bool:
         "answer rate": passed_answer_rate,
         "citation coverage": passed_coverage,
         "invalid citations": passed_invalid,
-        "no errors": not report.errored,
+        "no api errors": not report.errored,
+        "judge reliability": judge_errors <= thresholds.max_judge_errors,
     }
     failed = [name for name, ok in checks.items() if not ok]
     print("\nGATE: " + ("PASS" if not failed else f"FAIL ({', '.join(failed)})"))
@@ -258,6 +287,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-answer-rate", type=float, default=0.9)
     parser.add_argument("--min-citation-coverage", type=float, default=0.8)
     parser.add_argument("--max-invalid-citations", type=int, default=0)
+    parser.add_argument(
+        "--max-judge-errors",
+        type=int,
+        default=2,
+        help="samples the judge may fail to score before the run is untrustworthy",
+    )
     parser.add_argument("--skip-ingest", action="store_true")
     return parser.parse_args()
 
