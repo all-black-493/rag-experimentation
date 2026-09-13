@@ -13,7 +13,7 @@ from app.retrieval.citations import format_context
 from app.retrieval.grounding import DECLINE_MESSAGE, VERIFY_PROMPT, GroundednessCheck
 from app.retrieval.prompts import GENERATION_PROMPT
 from app.retrieval.state import GraphState
-from app.tracing import observation
+from app.tracing import linked_prompt, observation
 from app.vectorstore.store import tenant_exists
 
 
@@ -130,7 +130,8 @@ def generate(state: GraphState, llm: BaseChatModel) -> dict:
     message = GENERATION_PROMPT.template.invoke(
         {"context": context, "question": state["question"]}
     )
-    response = llm.invoke(message, config=_prompt_metadata(GENERATION_PROMPT))
+    with linked_prompt(GENERATION_PROMPT.name):
+        response = llm.invoke(message, config=_prompt_metadata(GENERATION_PROMPT))
     # .text (not .content) because content can be a list of blocks - e.g. Claude's
     # adaptive thinking, on by default, adds a thinking block alongside the text one.
     return {"answer": response.text}
@@ -150,7 +151,10 @@ def verify(state: GraphState, llm: BaseChatModel) -> dict:
         message = VERIFY_PROMPT.template.invoke(
             {"context": context, "question": state["question"], "answer": state["answer"]}
         )
-        result: GroundednessCheck = checker.invoke(message, config=_prompt_metadata(VERIFY_PROMPT))
+        with linked_prompt(VERIFY_PROMPT.name):
+            result: GroundednessCheck = checker.invoke(
+                message, config=_prompt_metadata(VERIFY_PROMPT)
+            )
         span.update(output={"grounded": result.grounded})
         return {"grounded": result.grounded}
 

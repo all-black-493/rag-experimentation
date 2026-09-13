@@ -164,8 +164,39 @@ cd eval && uv sync
 uv run python run_eval.py --anthropic-api-key "$ANTHROPIC_API_KEY"
 ```
 
-Gates on mean faithfulness (default `0.8`) and answer rate (default `0.9`, so the pipeline
-can't game faithfulness by declining everything). See `eval/README.md`.
+It gates on four thresholds, and the build fails if any of them slips:
+
+| Check | Default | Flag |
+|---|---|---|
+| mean faithfulness | `0.8` | `--faithfulness-threshold` |
+| answer rate | `0.9` | `--min-answer-rate` |
+| citation coverage | `0.8` | `--min-citation-coverage` |
+| invalid citations | `0` | `--max-invalid-citations` |
+
+Answer rate is there so the pipeline can't game faithfulness by declining everything.
+Coverage is computed with the same `app/scoring.py` the app scores live with, rather than a
+copy, so the gate and the dashboard can't drift apart. See `eval/README.md`.
+
+`main` is protected: the eval must pass before a pull request can merge, so work happens on
+a branch.
+
+## Prompt management
+
+Prompts live in `prompts/*.yaml` and are versioned in git — that's the source of truth.
+Langfuse mirrors them:
+
+```bash
+uv run python -m app.prompt_sync --dry-run
+uv run python -m app.prompt_sync        # after merging a prompt change
+```
+
+The direction matters. Authoring prompts in the Langfuse UI would let a prompt change alter
+production behaviour with no pull request and no eval — the exact path the gate above
+exists to close. Keeping them in the repo makes a prompt change a code change.
+
+What Langfuse adds is the version history, the Playground, and the link from each
+generation back to the prompt version that produced it, so latency, cost and scores can be
+grouped by prompt version when something regresses.
 
 ## Notes
 
