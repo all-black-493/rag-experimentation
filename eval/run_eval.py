@@ -24,6 +24,13 @@ DEFAULT_DATASET = EVAL_DIR / "golden_dataset.jsonl"
 DEFAULT_FIXTURES_DIR = EVAL_DIR / "fixtures"
 DEFAULT_REPORT = EVAL_DIR / "report.json"
 
+# Gate on the same citation-coverage code the app scores live with, rather than a
+# copy that can drift: a gate measuring something subtly different from the
+# dashboard is worse than no gate. app.scoring is stdlib-only, so importing it
+# here doesn't drag the app's LangChain pins into this isolated environment.
+sys.path.insert(0, str(EVAL_DIR.parent))
+from app.scoring import citation_coverage
+
 HEALTH_TIMEOUT_SECONDS = 60
 CONCURRENCY = 5
 
@@ -37,6 +44,8 @@ class SampleResult:
     answer: str = ""
     answered: bool = False
     faithfulness: float | None = None
+    citation_coverage: float | None = None
+    invalid_citations: int = 0
     error: str | None = None
 
 
@@ -61,6 +70,15 @@ class Report:
     def mean_faithfulness(self) -> float | None:
         scores = [r.faithfulness for r in self.answered if r.faithfulness is not None]
         return sum(scores) / len(scores) if scores else None
+
+    @property
+    def mean_citation_coverage(self) -> float | None:
+        scores = [r.citation_coverage for r in self.answered if r.citation_coverage is not None]
+        return sum(scores) / len(scores) if scores else None
+
+    @property
+    def total_invalid_citations(self) -> int:
+        return sum(r.invalid_citations for r in self.answered)
 
 
 def load_dataset(path: Path) -> list[dict]:
@@ -119,6 +137,10 @@ async def score_sample(
         if not result.answered:
             return result
 
+        coverage = citation_coverage(result.answer, len(payload["citations"]))
+        result.citation_coverage = coverage.coverage
+        result.invalid_citations = len(coverage.invalid_indices)
+
         try:
             sample = SingleTurnSample(
                 user_input=row["question"], response=result.answer, retrieved_contexts=contexts
@@ -155,6 +177,8 @@ def write_report(report: Report, path: Path) -> None:
     payload = {
         "answer_rate": report.answer_rate,
         "mean_faithfulness": report.mean_faithfulness,
+        "mean_citation_coverage": report.mean_citation_coverage,
+        "invalid_citations": report.total_invalid_citations,
         "total": len(report.results),
         "answered": len(report.answered),
         "errored": len(report.errored),
@@ -163,10 +187,11 @@ def write_report(report: Report, path: Path) -> None:
     path.write_text(json.dumps(payload, indent=2))
 
 
-def print_summary(report: Report, faithfulness_threshold: float, min_answer_rate: float) -> bool:
+def print_summary(report: Report, thresholds: argparse.Namespace) -> bool:
     print(f"\n{len(report.results)} questions, {len(report.answered)} answered, "
           f"{len(report.errored)} errored")
-    print(f"answer rate:       {report.answer_rate:.2%} (threshold {min_answer_rate:.2%})")
+    print(f"answer rate:       {report.answer_rate:.2%} "
+          f"(threshold {thresholds.min_answer_rate:.2%})")
 
     mean_faithfulness = report.mean_faithfulness
     if mean_faithfulness is None:
@@ -175,9 +200,22 @@ def print_summary(report: Report, faithfulness_threshold: float, min_answer_rate
     else:
         print(
             f"mean faithfulness: {mean_faithfulness:.3f} "
-            f"(threshold {faithfulness_threshold:.3f})"
+            f"(threshold {thresholds.faithfulness_threshold:.3f})"
         )
-        passed_faithfulness = mean_faithfulness >= faithfulness_threshold
+        passed_faithfulness = mean_faithfulness >= thresholds.faithfulness_threshold
+
+    coverage = report.mean_citation_coverage
+    if coverage is None:
+        print("citation coverage: n/a (no answered samples)")
+        passed_coverage = False
+    else:
+        print(f"citation coverage: {coverage:.3f} "
+              f"(threshold {thresholds.min_citation_coverage:.3f})")
+        passed_coverage = coverage >= thresholds.min_citation_coverage
+
+    invalid = report.total_invalid_citations
+    print(f"invalid citations: {invalid} (max {thresholds.max_invalid_citations})")
+    passed_invalid = invalid <= thresholds.max_invalid_citations
 
     worst = sorted(
         (r for r in report.answered if r.faithfulness is not None), key=lambda r: r.faithfulness
@@ -190,8 +228,17 @@ def print_summary(report: Report, faithfulness_threshold: float, min_answer_rate
     for r in report.errored:
         print(f"  ERROR {r.id}: {r.error}")
 
-    passed_answer_rate = report.answer_rate >= min_answer_rate
-    return passed_faithfulness and passed_answer_rate and not report.errored
+    passed_answer_rate = report.answer_rate >= thresholds.min_answer_rate
+    checks = {
+        "faithfulness": passed_faithfulness,
+        "answer rate": passed_answer_rate,
+        "citation coverage": passed_coverage,
+        "invalid citations": passed_invalid,
+        "no errors": not report.errored,
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    print("\nGATE: " + ("PASS" if not failed else f"FAIL ({', '.join(failed)})"))
+    return not failed
 
 
 def parse_args() -> argparse.Namespace:
@@ -209,6 +256,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--anthropic-api-key", required=True)
     parser.add_argument("--faithfulness-threshold", type=float, default=0.8)
     parser.add_argument("--min-answer-rate", type=float, default=0.9)
+    parser.add_argument("--min-citation-coverage", type=float, default=0.8)
+    parser.add_argument("--max-invalid-citations", type=int, default=0)
     parser.add_argument("--skip-ingest", action="store_true")
     return parser.parse_args()
 
@@ -217,7 +266,7 @@ def main() -> None:
     args = parse_args()
     report = asyncio.run(run(args))
     write_report(report, args.report)
-    passed = print_summary(report, args.faithfulness_threshold, args.min_answer_rate)
+    passed = print_summary(report, args)
     print(f"\nreport written to {args.report}")
     sys.exit(0 if passed else 1)
 
