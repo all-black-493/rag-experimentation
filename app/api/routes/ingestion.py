@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile
 from app.api.schemas import IngestResponse, IngestUrlRequest
 from app.config import get_settings
 from app.dependencies import RetrievalCacheDep, SettingsDep, TenantDep, VectorStoreDep
+from app.ingestion.malware import MalwareFoundError, ScannerUnavailableError, scan
 from app.ingestion.pipeline import ingest_file, ingest_url
 from app.ingestion.validation import UploadValidationError, validate_upload
 from app.rate_limit import limiter
@@ -33,6 +34,22 @@ async def ingest_uploaded_file(
         validate_upload(display_name, content, settings.max_upload_size_mb * 1024 * 1024)
     except UploadValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if settings.malware_scan_enabled:
+        try:
+            await asyncify(scan)(
+                content,
+                settings.clamav_host,
+                settings.clamav_port,
+                settings.clamav_timeout_seconds,
+            )
+        except MalwareFoundError as exc:
+            raise HTTPException(status_code=400, detail=f"File rejected: {exc}.") from exc
+        except ScannerUnavailableError as exc:
+            # Fail closed: an unscanned upload is not a cleared upload.
+            raise HTTPException(
+                status_code=503, detail="Malware scanning unavailable; upload refused."
+            ) from exc
 
     with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
         tmp.write(content)

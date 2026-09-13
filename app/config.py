@@ -42,6 +42,14 @@ class Settings(BaseSettings):
 
     max_upload_size_mb: int = 20
 
+    # Malware scanning. Off by default: ClamAV's signature database makes the
+    # image heavy and slow to become ready. When on, an unreachable scanner
+    # rejects the upload rather than passing it through.
+    malware_scan_enabled: bool = False
+    clamav_host: str = "clamav"
+    clamav_port: int = 3310
+    clamav_timeout_seconds: float = 30.0
+
     # Resilience for outbound provider calls. Bounded on purpose: an unbounded
     # retry against a rate-limited provider turns one slow request into a stalled
     # worker, which is how the ingestion hangs in this project started.
