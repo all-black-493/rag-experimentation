@@ -67,6 +67,40 @@ def tracing_enabled() -> bool:
     return _client is not None
 
 
+def get_client() -> Any:
+    return _client
+
+
+@contextmanager
+def linked_prompt(name: str) -> Iterator[None]:
+    """Attach the Langfuse prompt version to generations created in this block.
+
+    This is what lets Langfuse group latency, cost and scores by prompt version,
+    so a quality regression can be pinned to the prompt that shipped it. The
+    prompt is fetched by label rather than version - the SDK caches it, and
+    `app/prompt_sync.py` keeps the `production` label pointing at whatever is in
+    prompts/*.yaml on main.
+
+    A failure here must never break a query: an unreachable Langfuse, or a prompt
+    that was never synced, degrades to an unlinked (but still traced) generation.
+    """
+    if _client is None:
+        yield
+        return
+
+    try:
+        from langfuse import propagate_attributes
+
+        prompt = _client.get_prompt(name, label="production")
+    except Exception:  # tracing is never worth failing a request for
+        logger.debug("no langfuse prompt to link for %s", name, exc_info=True)
+        yield
+        return
+
+    with propagate_attributes(prompt=prompt):
+        yield
+
+
 def build_callback_handler() -> Any | None:
     """A LangChain callback handler bound to the current trace, or None when off.
 
