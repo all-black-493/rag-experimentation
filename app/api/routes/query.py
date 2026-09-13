@@ -1,3 +1,5 @@
+import logging
+
 from asyncer import asyncify
 from fastapi import APIRouter, Request
 from langgraph.graph.state import CompiledStateGraph
@@ -7,11 +9,12 @@ from app.config import get_settings
 from app.dependencies import GraphDep, TenantDep
 from app.rate_limit import limiter
 from app.retrieval.citations import build_citations
-from app.scoring import citation_coverage
+from app.scoring import citation_coverage, strip_invalid_citations
 from app.tracing import build_callback_handler, trace
 
 router = APIRouter(prefix="/query", tags=["query"])
 _rate_limit = get_settings().rate_limit_query
+logger = logging.getLogger(__name__)
 
 
 def _run_graph(graph: CompiledStateGraph, question: str, tenant: str) -> dict:
@@ -36,6 +39,14 @@ def _run_graph(graph: CompiledStateGraph, question: str, tenant: str) -> dict:
 
         citation_count = len(result["documents"])
         answered = bool(result["documents"])
+
+        # Enforce the citation contract before the answer leaves the server: a
+        # marker pointing past the context is a reference the reader can't check.
+        cleaned, stripped = strip_invalid_citations(result["answer"], citation_count)
+        if stripped:
+            logger.warning("stripped invalid citation markers %s", stripped)
+            result["answer"] = cleaned
+
         report = citation_coverage(result["answer"], citation_count)
 
         root.update(
@@ -45,7 +56,7 @@ def _run_graph(graph: CompiledStateGraph, question: str, tenant: str) -> dict:
                 "declined": not answered,
                 "cited_indices": report.cited_indices,
                 "unused_citations": report.unused_citations,
-                "invalid_indices": report.invalid_indices,
+                "invalid_indices": stripped,
             },
         )
 
@@ -62,7 +73,7 @@ def _run_graph(graph: CompiledStateGraph, question: str, tenant: str) -> dict:
             # A marker pointing at a citation that doesn't exist is the model
             # inventing a reference, which coverage alone would score as a hit.
             root.score_trace(
-                name="invalid_citations", value=float(len(report.invalid_indices)),
+                name="invalid_citations", value=float(len(stripped)),
                 data_type="NUMERIC",
             )
         return result

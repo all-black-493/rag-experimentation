@@ -16,6 +16,10 @@ _CITATION_MARKER = re.compile(r"\[(\d+)\]")
 # Leading markdown list/heading punctuation, so "- foo" measures as "foo".
 _LIST_PREFIX = re.compile(r"^\s*(?:[-*+]|\d+\.|#{1,6})\s*")
 
+# Tidying up after a removed citation marker.
+_MANY_SPACES_INLINE = re.compile(r"[ \t]{2,}")
+_SPACE_BEFORE_PUNCTUATION = re.compile(r"\s+([.,;:!?])")
+
 
 @dataclass(frozen=True)
 class CoverageReport:
@@ -34,6 +38,37 @@ def _sentences(answer: str) -> list[str]:
         if stripped:
             candidates.extend(part for part in _SENTENCE_BOUNDARY.split(stripped) if part.strip())
     return candidates
+
+
+def strip_invalid_citations(answer: str, citation_count: int) -> tuple[str, list[int]]:
+    """Remove `[n]` markers that point at citations which don't exist.
+
+    The generator occasionally emits a marker past the end of the context it was
+    given. Left in, it renders as a citation the reader can click and a number
+    they can't check - the failure mode this whole citation contract exists to
+    prevent. Scoring records that it happened; this stops it reaching anyone.
+
+    Only the marker is removed, never the surrounding claim: the sentence may
+    well be supported, and silently deleting text would be a worse trade. An
+    answer that loses all its markers simply scores zero coverage.
+    """
+    removed: list[int] = []
+
+    def replace(match: re.Match) -> str:
+        index = int(match.group(1))
+        if 1 <= index <= citation_count:
+            return match.group(0)
+        removed.append(index)
+        return ""
+
+    cleaned = _CITATION_MARKER.sub(replace, answer)
+    if not removed:
+        return answer, []
+
+    # Tidy the space left where a marker was, e.g. "text [1] [7]." -> "text [1]."
+    cleaned = _MANY_SPACES_INLINE.sub(" ", cleaned)
+    cleaned = _SPACE_BEFORE_PUNCTUATION.sub(r"\1", cleaned)
+    return cleaned.strip(), sorted(set(removed))
 
 
 def citation_coverage(answer: str, citation_count: int) -> CoverageReport:

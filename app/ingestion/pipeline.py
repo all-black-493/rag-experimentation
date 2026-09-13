@@ -1,13 +1,16 @@
-import uuid
+import logging
 from pathlib import Path
 
 from langchain_weaviate import WeaviateVectorStore
 
 from app.config import Settings
+from app.ingestion.dedupe import already_ingested, content_id, record_ingestion
 from app.ingestion.loaders import load_path, load_web
 from app.ingestion.pdf import load_and_chunk_pdf, render_page_thumbnails
 from app.ingestion.splitting import chunk_documents
-from app.storage import save_page_thumbnail, save_pdf
+from app.storage import UPLOADS_DIR, save_page_thumbnail, save_pdf
+
+logger = logging.getLogger(__name__)
 
 
 def ingest_file(
@@ -25,10 +28,19 @@ def ingest_file(
     the write to one session's isolated partition of the collection.
     """
     name = display_name or path.name
+    content = path.read_bytes()
+    doc_id = content_id(content)
+
+    # Same bytes, same tenant: already indexed, so skip parsing, chunking and
+    # embedding entirely. This is what makes a retried or duplicated upload cheap
+    # and non-duplicating rather than a second full pass.
+    previous = already_ingested(UPLOADS_DIR, tenant, doc_id)
+    if previous is not None:
+        logger.info("skipping %s - identical content already indexed as %s", name, doc_id)
+        return previous["chunks"]
 
     if path.suffix.lower() == ".pdf":
-        doc_id = str(uuid.uuid4())
-        save_pdf(tenant, doc_id, path.read_bytes())
+        save_pdf(tenant, doc_id, content)
         chunks = load_and_chunk_pdf(path, settings, doc_id=doc_id, display_name=name)
         cited_pages = {chunk.metadata["page"] for chunk in chunks}
         for page, thumbnail in render_page_thumbnails(path, cited_pages).items():
@@ -42,6 +54,9 @@ def ingest_file(
 
     if chunks:
         vector_store.add_documents(chunks, tenant=tenant)
+    # Recorded only after a successful index, so a failed run is retried in full
+    # rather than remembered as done.
+    record_ingestion(UPLOADS_DIR, tenant, doc_id, source=name, chunks=len(chunks))
     return len(chunks)
 
 

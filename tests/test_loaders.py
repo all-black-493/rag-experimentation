@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -75,8 +76,40 @@ def test_load_web_caches_og_image_as_thumbnail():
 
 
 def test_load_path_rejects_unsupported_extension(tmp_path: Path):
-    file_path = tmp_path / "data.csv"
-    file_path.write_text("a,b,c")
+    file_path = tmp_path / "installer.exe"
+    file_path.write_bytes(b"MZ\x90\x00")
 
     with pytest.raises(ValueError, match="Unsupported file type"):
         load_path(file_path)
+
+
+def test_load_csv_flattens_rows(tmp_path: Path):
+    file_path = tmp_path / "data.csv"
+    file_path.write_text("name,role\nada,engineer\n\ngrace,admiral\n")
+
+    documents = load_path(file_path)
+
+    assert documents[0].page_content == "name | role\nada | engineer\ngrace | admiral"
+
+
+def test_load_json_is_rejected_when_malformed(tmp_path: Path):
+    """Better to fail here than silently index broken JSON as prose."""
+    file_path = tmp_path / "broken.json"
+    file_path.write_text("{not valid json")
+
+    with pytest.raises(json.JSONDecodeError):
+        load_path(file_path)
+
+
+def test_load_html_uses_title_and_drops_scripts(tmp_path: Path):
+    file_path = tmp_path / "page.html"
+    file_path.write_text(
+        "<html><head><title>Doc Title</title></head>"
+        "<body><script>evil()</script><p>Real text.</p></body></html>"
+    )
+
+    documents = load_path(file_path)
+
+    assert documents[0].metadata["title"] == "Doc Title"
+    assert "Real text." in documents[0].page_content
+    assert "evil()" not in documents[0].page_content

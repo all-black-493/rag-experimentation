@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile
 
 from app.api.schemas import IngestResponse, IngestUrlRequest
 from app.config import get_settings
-from app.dependencies import SettingsDep, TenantDep, VectorStoreDep
+from app.dependencies import RetrievalCacheDep, SettingsDep, TenantDep, VectorStoreDep
 from app.ingestion.pipeline import ingest_file, ingest_url
 from app.ingestion.validation import UploadValidationError, validate_upload
 from app.rate_limit import limiter
@@ -23,6 +23,7 @@ async def ingest_uploaded_file(
     vector_store: VectorStoreDep,
     settings: SettingsDep,
     tenant: TenantDep,
+    retrieval_cache: RetrievalCacheDep,
 ) -> IngestResponse:
     display_name = file.filename or "upload"
     suffix = Path(display_name).suffix
@@ -40,6 +41,8 @@ async def ingest_uploaded_file(
             Path(tmp.name), vector_store, settings, tenant=tenant, display_name=display_name
         )
 
+    # Anything cached for this tenant predates the new document.
+    retrieval_cache.invalidate_namespace(tenant)
     return IngestResponse(source=display_name, chunks_indexed=chunk_count)
 
 
@@ -51,6 +54,8 @@ async def ingest_from_url(
     vector_store: VectorStoreDep,
     settings: SettingsDep,
     tenant: TenantDep,
+    retrieval_cache: RetrievalCacheDep,
 ) -> IngestResponse:
     chunk_count = await asyncify(ingest_url)(payload.url, vector_store, settings, tenant=tenant)
+    retrieval_cache.invalidate_namespace(tenant)
     return IngestResponse(source=payload.url, chunks_indexed=chunk_count)

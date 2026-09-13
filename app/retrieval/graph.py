@@ -1,3 +1,4 @@
+import logging
 from functools import partial
 from typing import Literal
 
@@ -9,12 +10,19 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from weaviate.client import WeaviateClient
 
+from app.caching import TTLCache
+from app.resilience import CircuitBreaker, CircuitOpenError
 from app.retrieval.citations import format_context
 from app.retrieval.grounding import DECLINE_MESSAGE, VERIFY_PROMPT, GroundednessCheck
 from app.retrieval.prompts import GENERATION_PROMPT
 from app.retrieval.state import GraphState
 from app.tracing import linked_prompt, observation
 from app.vectorstore.store import tenant_exists
+
+logger = logging.getLogger(__name__)
+
+# How many hybrid-search results to keep when the reranker is unavailable.
+_RERANK_FALLBACK_TOP_N = 5
 
 
 def _identity(doc: Document) -> tuple:
@@ -41,6 +49,7 @@ def retrieve(
     collection: str,
     k: int,
     alpha: float,
+    cache: TTLCache | None = None,
 ) -> dict:
     tenant = state["tenant"]
     # Named for the operation, not the node: LangGraph's callback already emits a
@@ -51,6 +60,18 @@ def retrieve(
         input={"question": state["question"]},
         metadata={"k": k, "hybrid_alpha": alpha, "collection": collection},
     ) as span:
+        # Tenant is part of the key, so a cache hit can only ever return the
+        # asking session's own documents.
+        cache_key = TTLCache.key(tenant, state["question"], k, alpha, collection)
+        if cache is not None:
+            hit = cache.get(cache_key)
+            if hit is not None:
+                span.update(
+                    output=[_traceable(doc) for doc in hit],
+                    metadata={"cached": True, "retrieved": len(hit)},
+                )
+                return {"documents": hit}
+
         if not tenant_exists(client, collection, tenant):
             span.update(output=[], metadata={"tenant_exists": False})
             return {"documents": []}
@@ -58,14 +79,21 @@ def retrieve(
         documents = vector_store.similarity_search(
             state["question"], k=k, alpha=alpha, tenant=tenant
         )
+        if cache is not None:
+            cache.set(cache_key, documents, namespace=tenant)
         span.update(
             output=[_traceable(doc) for doc in documents],
-            metadata={"tenant_exists": True, "retrieved": len(documents)},
+            metadata={"tenant_exists": True, "retrieved": len(documents), "cached": False},
         )
         return {"documents": documents}
 
 
-def rerank(state: GraphState, reranker: CohereRerank, relevance_threshold: float) -> dict:
+def rerank(
+    state: GraphState,
+    reranker: CohereRerank,
+    relevance_threshold: float,
+    breaker: CircuitBreaker | None = None,
+) -> dict:
     candidates = state["documents"]
     with observation(
         as_type="retriever",
@@ -79,7 +107,26 @@ def rerank(state: GraphState, reranker: CohereRerank, relevance_threshold: float
         },
         metadata={"relevance_threshold": relevance_threshold},
     ) as span:
-        reranked = reranker.compress_documents(candidates, state["question"])
+        try:
+            if breaker is not None:
+                breaker.before_call()
+            reranked = reranker.compress_documents(candidates, state["question"])
+            if breaker is not None:
+                breaker.record_success()
+        except Exception as exc:  # noqa: BLE001 - any provider failure degrades the same way
+            # Degrade rather than fail: hybrid search already ordered these by
+            # relevance, so answering from an unreranked top slice beats refusing
+            # to answer at all. The threshold can't be applied without scores.
+            if breaker is not None and not isinstance(exc, CircuitOpenError):
+                breaker.record_failure()
+            logger.warning("rerank unavailable (%s); using retrieval order", exc)
+            fallback = candidates[:_RERANK_FALLBACK_TOP_N]
+            span.update(
+                output=[_traceable(doc) for doc in fallback],
+                metadata={"reranked": False, "reason": str(exc)},
+            )
+            return {"documents": fallback}
+
         relevant = [
             doc
             for doc in reranked
@@ -177,6 +224,8 @@ def build_graph(
     retrieval_candidates: int,
     hybrid_alpha: float,
     relevance_threshold: float,
+    rerank_breaker: CircuitBreaker | None = None,
+    retrieval_cache: TTLCache | None = None,
 ) -> CompiledStateGraph:
     graph = StateGraph(GraphState)
     graph.add_node(
@@ -188,10 +237,17 @@ def build_graph(
             collection=collection,
             k=retrieval_candidates,
             alpha=hybrid_alpha,
+            cache=retrieval_cache,
         ),
     )
     graph.add_node(
-        "rerank", partial(rerank, reranker=reranker, relevance_threshold=relevance_threshold)
+        "rerank",
+        partial(
+            rerank,
+            reranker=reranker,
+            relevance_threshold=relevance_threshold,
+            breaker=rerank_breaker,
+        ),
     )
     graph.add_node("generate", partial(generate, llm=llm))
     graph.add_node("verify", partial(verify, llm=llm))
