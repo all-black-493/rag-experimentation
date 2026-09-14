@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.jobs import JobRegistry
 from app.rate_limit import limiter
 from app.resilience import CircuitBreaker
-from app.retrieval.graph import build_graph
+from app.retrieval.graph import HYBRID_FUSIONS, build_graph
 from app.retrieval.reranker import build_reranker
 from app.tracing import configure_tracing, shutdown_tracing
 from app.vectorstore.client import weaviate_client
@@ -61,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             relevance_threshold=settings.rerank_relevance_threshold,
             rerank_breaker=rerank_breaker,
             retrieval_cache=retrieval_cache,
+            fusion=HYBRID_FUSIONS[settings.hybrid_fusion],
         )
 
         try:

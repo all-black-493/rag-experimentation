@@ -8,11 +8,13 @@ from langchain_core.language_models import BaseChatModel
 from langchain_weaviate import WeaviateVectorStore
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from weaviate.classes.query import HybridFusion
 from weaviate.client import WeaviateClient
 
 from app.caching import TTLCache
 from app.resilience import CircuitBreaker, CircuitOpenError
 from app.retrieval.citations import format_context
+from app.retrieval.filters import build_filter
 from app.retrieval.grounding import DECLINE_MESSAGE, VERIFY_PROMPT, GroundednessCheck
 from app.retrieval.prompts import GENERATION_PROMPT
 from app.retrieval.state import GraphState
@@ -20,6 +22,14 @@ from app.tracing import linked_prompt, observation
 from app.vectorstore.store import tenant_exists
 
 logger = logging.getLogger(__name__)
+
+# Weaviate's two fusion strategies for combining BM25 and vector rankings.
+# RANKED is reciprocal rank fusion; RELATIVE_SCORE normalises and blends the
+# underlying scores. See the note on Settings.hybrid_fusion for which wins here.
+HYBRID_FUSIONS = {
+    "relative": HybridFusion.RELATIVE_SCORE,
+    "ranked": HybridFusion.RANKED,
+}
 
 # How many hybrid-search results to keep when the reranker is unavailable.
 _RERANK_FALLBACK_TOP_N = 5
@@ -50,6 +60,7 @@ def retrieve(
     k: int,
     alpha: float,
     cache: TTLCache | None = None,
+    fusion: object | None = None,
 ) -> dict:
     tenant = state["tenant"]
     # Named for the operation, not the node: LangGraph's callback already emits a
@@ -58,11 +69,23 @@ def retrieve(
         as_type="retriever",
         name="weaviate-hybrid-search",
         input={"question": state["question"]},
-        metadata={"k": k, "hybrid_alpha": alpha, "collection": collection},
+        metadata={
+            "k": k,
+            "hybrid_alpha": alpha,
+            "collection": collection,
+            "filters": state.get("filters").describe() if state.get("filters") else None,
+        },
     ) as span:
         # Tenant is part of the key, so a cache hit can only ever return the
         # asking session's own documents.
-        cache_key = TTLCache.key(tenant, state["question"], k, alpha, collection)
+        filters = state.get("filters")
+        weaviate_filter = build_filter(filters) if filters is not None else None
+        # Filters are part of the identity of a result set; without them in the
+        # key an unfiltered answer would be served to a filtered query.
+        cache_key = TTLCache.key(
+            tenant, state["question"], k, alpha, collection,
+            repr(filters.describe()) if filters is not None else "",
+        )
         if cache is not None:
             hit = cache.get(cache_key)
             if hit is not None:
@@ -76,9 +99,12 @@ def retrieve(
             span.update(output=[], metadata={"tenant_exists": False})
             return {"documents": []}
 
-        documents = vector_store.similarity_search(
-            state["question"], k=k, alpha=alpha, tenant=tenant
-        )
+        search_kwargs = {"k": k, "alpha": alpha, "tenant": tenant}
+        if fusion is not None:
+            search_kwargs["fusion_type"] = fusion
+        if weaviate_filter is not None:
+            search_kwargs["filters"] = weaviate_filter
+        documents = vector_store.similarity_search(state["question"], **search_kwargs)
         if cache is not None:
             cache.set(cache_key, documents, namespace=tenant)
         span.update(
@@ -226,6 +252,7 @@ def build_graph(
     relevance_threshold: float,
     rerank_breaker: CircuitBreaker | None = None,
     retrieval_cache: TTLCache | None = None,
+    fusion: object | None = None,
 ) -> CompiledStateGraph:
     graph = StateGraph(GraphState)
     graph.add_node(
@@ -238,6 +265,7 @@ def build_graph(
             k=retrieval_candidates,
             alpha=hybrid_alpha,
             cache=retrieval_cache,
+            fusion=fusion,
         ),
     )
     graph.add_node(

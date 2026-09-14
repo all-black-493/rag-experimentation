@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -27,6 +28,17 @@ class Settings(BaseSettings):
     # size fetched before reranking narrows it down.
     retrieval_candidates: int = 60
     hybrid_alpha: float = 0.5
+    # How BM25 and vector rankings are combined. "relative" (Weaviate's default
+    # relativeScoreFusion) normalises and blends the scores; "ranked" is
+    # reciprocal rank fusion, which uses ranks only and ignores magnitude.
+    #
+    # Measured, don't assume: on eval/retrieval_benchmark.py over a 142-chunk
+    # corpus, RRF scored 91.8% recall@1 against relative's 95.9%, and was behind
+    # on MRR at every cutoff. RRF's score-scale independence is the right
+    # instinct for combining unrelated retrievers, but here BM25 is the noisier
+    # of the two and RRF gives its ranking equal standing with the vector
+    # ranking's. Re-measure on real data before changing this.
+    hybrid_fusion: Literal["relative", "ranked"] = "relative"
 
     # Cross-encoder reranking over the candidate pool. Cast a wide net and cut it
     # down hard: recall is cheap at the retrieval stage and precision is what the
