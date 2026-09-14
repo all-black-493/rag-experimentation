@@ -2,24 +2,39 @@ import logging
 from functools import partial
 from typing import Literal
 
-from langchain_cohere import CohereRerank
 from langchain_core.documents import Document
 from langchain_core.language_models import BaseChatModel
 from langchain_weaviate import WeaviateVectorStore
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from weaviate.classes.query import HybridFusion
 from weaviate.client import WeaviateClient
 
 from app.caching import TTLCache
 from app.resilience import CircuitBreaker, CircuitOpenError
 from app.retrieval.citations import format_context
+from app.retrieval.filters import build_filter
 from app.retrieval.grounding import DECLINE_MESSAGE, VERIFY_PROMPT, GroundednessCheck
+from app.retrieval.pairwise import PairwiseReranker
 from app.retrieval.prompts import GENERATION_PROMPT
+from app.retrieval.reranker import Reranker
 from app.retrieval.state import GraphState
 from app.tracing import linked_prompt, observation
 from app.vectorstore.store import tenant_exists
 
 logger = logging.getLogger(__name__)
+
+# Weaviate's two fusion strategies for combining BM25 and vector rankings.
+# RANKED is reciprocal rank fusion; RELATIVE_SCORE normalises and blends the
+# underlying scores. See the note on Settings.hybrid_fusion for which wins here.
+HYBRID_FUSIONS = {
+    "relative": HybridFusion.RELATIVE_SCORE,
+    "ranked": HybridFusion.RANKED,
+}
+
+# Named for the stage, not the vendor: the reranker is pluggable, and a span
+# labelled with the wrong provider is worse than an unlabelled one.
+RERANK_SPAN_NAME = "rerank-cross-encoder"
 
 # How many hybrid-search results to keep when the reranker is unavailable.
 _RERANK_FALLBACK_TOP_N = 5
@@ -50,6 +65,7 @@ def retrieve(
     k: int,
     alpha: float,
     cache: TTLCache | None = None,
+    fusion: object | None = None,
 ) -> dict:
     tenant = state["tenant"]
     # Named for the operation, not the node: LangGraph's callback already emits a
@@ -58,11 +74,23 @@ def retrieve(
         as_type="retriever",
         name="weaviate-hybrid-search",
         input={"question": state["question"]},
-        metadata={"k": k, "hybrid_alpha": alpha, "collection": collection},
+        metadata={
+            "k": k,
+            "hybrid_alpha": alpha,
+            "collection": collection,
+            "filters": state.get("filters").describe() if state.get("filters") else None,
+        },
     ) as span:
         # Tenant is part of the key, so a cache hit can only ever return the
         # asking session's own documents.
-        cache_key = TTLCache.key(tenant, state["question"], k, alpha, collection)
+        filters = state.get("filters")
+        weaviate_filter = build_filter(filters) if filters is not None else None
+        # Filters are part of the identity of a result set; without them in the
+        # key an unfiltered answer would be served to a filtered query.
+        cache_key = TTLCache.key(
+            tenant, state["question"], k, alpha, collection,
+            repr(filters.describe()) if filters is not None else "",
+        )
         if cache is not None:
             hit = cache.get(cache_key)
             if hit is not None:
@@ -76,9 +104,12 @@ def retrieve(
             span.update(output=[], metadata={"tenant_exists": False})
             return {"documents": []}
 
-        documents = vector_store.similarity_search(
-            state["question"], k=k, alpha=alpha, tenant=tenant
-        )
+        search_kwargs = {"k": k, "alpha": alpha, "tenant": tenant}
+        if fusion is not None:
+            search_kwargs["fusion_type"] = fusion
+        if weaviate_filter is not None:
+            search_kwargs["filters"] = weaviate_filter
+        documents = vector_store.similarity_search(state["question"], **search_kwargs)
         if cache is not None:
             cache.set(cache_key, documents, namespace=tenant)
         span.update(
@@ -90,14 +121,15 @@ def retrieve(
 
 def rerank(
     state: GraphState,
-    reranker: CohereRerank,
+    reranker: Reranker,
     relevance_threshold: float,
     breaker: CircuitBreaker | None = None,
+    pairwise: PairwiseReranker | None = None,
 ) -> dict:
     candidates = state["documents"]
     with observation(
         as_type="retriever",
-        name="cohere-rerank",
+        name=RERANK_SPAN_NAME,
         input={
             "question": state["question"],
             # Ordering in, so the reordering is visible against what came out.
@@ -136,6 +168,15 @@ def rerank(
         # Where each survivor sat before reranking, so a reorder is legible at a
         # glance rather than by eyeballing two lists side by side. Keyed by content
         # rather than identity: compress_documents returns copies, not the originals.
+        # Stage 3, over the finalists only. Failure here degrades to stage 2's
+        # ordering rather than failing the query: a refinement that can't run is
+        # not a reason to lose an answer.
+        if pairwise is not None and relevant:
+            try:
+                relevant = pairwise.rerank(relevant, state["question"])
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("pairwise rerank unavailable (%s); keeping stage-2 order", exc)
+
         original_position = {_identity(doc): i for i, doc in enumerate(candidates, start=1)}
         span.update(
             output=[
@@ -151,6 +192,7 @@ def rerank(
                 "candidates": len(candidates),
                 "kept": len(relevant),
                 "dropped_below_threshold": len(reranked) - len(relevant),
+                "pairwise": pairwise is not None,
             },
         )
         return {"documents": relevant}
@@ -217,7 +259,7 @@ def decline(state: GraphState) -> dict:
 def build_graph(
     vector_store: WeaviateVectorStore,
     client: WeaviateClient,
-    reranker: CohereRerank,
+    reranker: Reranker,
     llm: BaseChatModel,
     *,
     collection: str,
@@ -226,6 +268,8 @@ def build_graph(
     relevance_threshold: float,
     rerank_breaker: CircuitBreaker | None = None,
     retrieval_cache: TTLCache | None = None,
+    fusion: object | None = None,
+    pairwise: PairwiseReranker | None = None,
 ) -> CompiledStateGraph:
     graph = StateGraph(GraphState)
     graph.add_node(
@@ -238,6 +282,7 @@ def build_graph(
             k=retrieval_candidates,
             alpha=hybrid_alpha,
             cache=retrieval_cache,
+            fusion=fusion,
         ),
     )
     graph.add_node(
@@ -247,6 +292,7 @@ def build_graph(
             reranker=reranker,
             relevance_threshold=relevance_threshold,
             breaker=rerank_breaker,
+            pairwise=pairwise,
         ),
     )
     graph.add_node("generate", partial(generate, llm=llm))

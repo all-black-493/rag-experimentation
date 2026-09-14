@@ -2,6 +2,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
 
 from app.config import Settings
+from app.ingestion.parenting import window
 
 _MARKDOWN_SUFFIXES = (".md", ".markdown")
 
@@ -16,7 +17,7 @@ def build_splitter(settings: Settings, *, markdown: bool = False) -> RecursiveCh
     kwargs = {"separators": separators} if markdown else {}
     return RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         encoding_name="cl100k_base",
-        chunk_size=settings.chunk_size_tokens,
+        chunk_size=settings.child_chunk_size_tokens,
         chunk_overlap=settings.chunk_overlap_tokens,
         **kwargs,
     )
@@ -32,4 +33,23 @@ def chunk_documents(documents: list[Document], settings: Settings) -> list[Docum
         chunks.extend(build_splitter(settings, markdown=True).split_documents(markdown_docs))
     if other_docs:
         chunks.extend(build_splitter(settings).split_documents(other_docs))
+
+    _attach_parents(chunks, settings.parent_window_radius)
     return chunks
+
+
+def _attach_parents(chunks: list[Document], radius: int) -> None:
+    """Give each child the window of neighbours around it, per source document.
+
+    Grouped by source so a window never spans two documents - the neighbouring
+    chunk of the last child of one file is the first child of the next, which
+    has nothing to do with it.
+    """
+    by_source: dict[str, list[Document]] = {}
+    for chunk in chunks:
+        by_source.setdefault(chunk.metadata.get("source", ""), []).append(chunk)
+
+    for group in by_source.values():
+        texts = [c.page_content for c in group]
+        for i, chunk in enumerate(group):
+            chunk.metadata["parent_text"] = window(texts, i, radius)

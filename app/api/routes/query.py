@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.dependencies import GraphDep, TenantDep
 from app.rate_limit import limiter
 from app.retrieval.citations import build_citations
+from app.retrieval.filters import RetrievalFilters
 from app.scoring import citation_coverage, strip_invalid_citations
 from app.tracing import build_callback_handler, trace
 
@@ -17,7 +18,12 @@ _rate_limit = get_settings().rate_limit_query
 logger = logging.getLogger(__name__)
 
 
-def _run_graph(graph: CompiledStateGraph, question: str, tenant: str) -> dict:
+def _run_graph(
+    graph: CompiledStateGraph,
+    question: str,
+    tenant: str,
+    filters: RetrievalFilters | None = None,
+) -> dict:
     """Run one query under a single root trace.
 
     Synchronous and self-contained on purpose: the route hands the whole thing to
@@ -29,7 +35,10 @@ def _run_graph(graph: CompiledStateGraph, question: str, tenant: str) -> dict:
         config = {"callbacks": [handler]} if handler else {}
 
         try:
-            result = graph.invoke({"question": question, "tenant": tenant}, config=config)
+            state = {"question": question, "tenant": tenant}
+            if filters is not None:
+                state["filters"] = filters
+            result = graph.invoke(state, config=config)
         except Exception:
             # An errored request would otherwise leave a trace with no scores at
             # all, which reads the same as a trace that was never sent.
@@ -84,6 +93,9 @@ def _run_graph(graph: CompiledStateGraph, question: str, tenant: str) -> dict:
 async def answer_question(
     request: Request, payload: QueryRequest, graph: GraphDep, tenant: TenantDep
 ) -> QueryResponse:
-    result = await asyncify(_run_graph)(graph, payload.question, tenant)
+    filters = (
+        RetrievalFilters(**payload.filters.model_dump()) if payload.filters else None
+    )
+    result = await asyncify(_run_graph)(graph, payload.question, tenant, filters)
     citations = [Citation(**citation) for citation in build_citations(result["documents"])]
     return QueryResponse(answer=result["answer"], citations=citations)

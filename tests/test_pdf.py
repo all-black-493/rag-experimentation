@@ -53,7 +53,9 @@ def test_chunk_pdf_blocks_merges_blocks_within_budget(tmp_path: Path):
 def test_chunk_pdf_blocks_splits_when_over_budget(tmp_path: Path):
     pdf_path = tmp_path / "doc.pdf"
     make_pdf(pdf_path, pages=[["word " * 100, "word " * 100, "word " * 100]])
-    settings = Settings(chunk_size_tokens=50, chunk_overlap_tokens=10)
+    # child_chunk_size_tokens, not chunk_size_tokens, is what bounds a chunk
+    # under small-to-big.
+    settings = Settings(child_chunk_size_tokens=50, chunk_overlap_tokens=10)
 
     chunks = chunk_pdf_blocks(extract_pdf_blocks(pdf_path), settings)
 

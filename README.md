@@ -60,12 +60,145 @@ retrieve --(candidates)--> rerank --(any survive threshold?)--> generate -> veri
                                           (verify says ungrounded)
 ```
 
-1. **retrieve** — Weaviate hybrid search scoped to the tenant. A tenant that has never
-   written anything short-circuits rather than querying a tenant that doesn't exist.
-2. **rerank** — Cohere cross-encoder; chunks below `RERANK_RELEVANCE_THRESHOLD` are dropped.
+1. **retrieve** — Weaviate hybrid search (BM25 + vector) scoped to the tenant, with optional
+   metadata filters pushed into the query. A tenant that has never written anything
+   short-circuits rather than querying a tenant that doesn't exist.
+2. **rerank** — Cohere cross-encoder over 60 candidates, keeping 5 above
+   `RERANK_RELEVANCE_THRESHOLD`. Behind a circuit breaker: if it's unavailable, retrieval
+   order is used instead of failing the query.
 3. **generate** — drafts a cited answer, or routes straight to **decline** if nothing survived.
 4. **verify** — structured-output call checks the draft against the numbered context; an
    ungrounded answer is replaced by the decline message.
+
+### Small-to-big retrieval
+
+What gets embedded and matched is a small **child** (`CHILD_CHUNK_SIZE_TOKENS`, 200). What
+the model reads is the **parent window** — that child plus `PARENT_WINDOW_RADIUS` neighbours
+either side, denormalised onto the child at ingestion so there's no extra round trip per
+result at query time.
+
+Retrieval wants small chunks (a 650-token passage embeds to an average of everything in it,
+diluting the one relevant sentence); generation wants large ones (an isolated sentence has
+no referent for "the limit"). This takes both.
+
+It also buys the precise highlight. A citation's bbox is the child's box — the lines that
+actually matched — rather than the union of everything in a large chunk. Measured over a
+dense 3-page PDF:
+
+| | chunks | mean bbox | largest |
+|---|---|---|---|
+| 650-token chunks | 9 | 21.8% of page | 29.0% |
+| 200-token children | 36 | **3.4% of page** | 7.7% |
+
+Windows never cross a page (PDFs) or a source document (everything else): a window spanning
+a page break pulls in unrelated text while the bbox still points at one page.
+
+Note that `eval/retrieval_benchmark.py` scores *document-level* recall and shows small-to-big
+slightly behind (93.9% vs 95.9% recall@1) — with 5× more chunks there are 5× more competing
+distractors. That benchmark can't see what this change is for: passage precision, generation
+context, and highlight tightness. The arbiter for those is the faithfulness eval.
+
+### Local models (no provider quota)
+
+Embeddings and reranking both run in-process by default, so neither ingestion nor
+querying depends on a provider quota:
+
+| stage | default (`local`) | alternative (`cohere`) |
+|---|---|---|
+| embeddings | `BAAI/bge-small-en-v1.5` (384-dim) | `embed-v4.0` |
+| reranking | `cross-encoder/ms-marco-MiniLM-L-6-v2` | `rerank-v3.5` |
+
+Measured on CPU: reranking 60 candidates takes **181ms**, embedding 64 passages **178ms**,
+a query embedding **15ms**. Weights are baked into the image, so containers start without a
+download and need no outbound HuggingFace access.
+
+`torch` is pinned to the CPU wheel via `[tool.uv.sources]`. The default wheel drags in
+~3.2GB of CUDA libraries and ~900MB of triton that a CPU container cannot use — it made the
+virtualenv 5.8GB instead of 1.4GB. Note that source overrides only apply to a project's
+*own* dependencies, which is why `torch` is declared directly rather than left transitive.
+
+**Switching `EMBEDDING_PROVIDER` invalidates the index.** Vectors from different models have
+different dimensionality and geometry, so everything must be re-ingested. The embedding
+cache is keyed by model name, so stale vectors are never served across a switch.
+
+Retrieval quality against the same 735-chunk corpus, differing only in embedding model:
+
+| k | Cohere recall@k | local recall@k | Cohere MRR | local MRR |
+|---|---|---|---|---|
+| 1 | **93.9%** | 83.7% | **0.939** | 0.837 |
+| 3 | 95.9% | **98.0%** | **0.949** | 0.905 |
+| 5 | 95.9% | **100.0%** | **0.949** | 0.909 |
+
+Local is worse at putting the right document *first* (-10pp at k=1) but better at getting it
+into the top 5 at all. Since the pipeline retrieves 60 candidates and reranks down to 5,
+top-5 recall is the more decision-relevant number — the cross-encoder re-scores whatever the
+vector stage surfaces. If rank-1 precision matters more for your traffic,
+`bge-base-en-v1.5` (768-dim) is the obvious next step up.
+
+### Multi-stage reranking
+
+```
+hybrid search (60)  →  cross-encoder (→5)  →  [optional] duoT5 pairwise (reorder 5)
+```
+
+Stage 2 scores each passage against the query independently — it can say "both look
+relevant" but never "this one more than that one". Stage 3 (`PAIRWISE_RERANK_ENABLED`) is
+duoT5, trained on exactly that comparison, and catches orderings pointwise scoring can't
+express. A worked case:
+
+| stage | top result |
+|---|---|
+| after cross-encoder | "**international** travel capped at $250" |
+| after duoT5 pairwise | "maximum nightly rate for **domestic** travel is $150" |
+
+**Off by default, because it's quadratic.** Every ordered pair costs a forward pass: k=5 is
+20 comparisons, k=10 is 90, k=20 is 380. Measured at k=5 on CPU it adds **~2.0s per query**,
+roughly doubling end-to-end latency. It runs strictly *after* the cross-encoder has cut 60
+down to a few — never over a candidate pool — and a failure degrades to stage-2 order rather
+than failing the query.
+
+Note that monoT5's role (pointwise neural relevance) is already filled by the MiniLM
+cross-encoder, which does the same job faster and smaller. Enabling stage 3 downloads the
+duoT5 weights (~900MB); they aren't baked into the image since the stage is off by default.
+
+### Metadata filtering
+
+`POST /query` takes an optional `filters` object — `source_types`, `sources`, `doc_ids`,
+`page_from`/`page_to`, ANDed. They become Weaviate `Filter` objects pushed into the hybrid
+query, so filtering happens **before** ranking. Post-filtering a fixed candidate pool is the
+tempting shortcut and it silently destroys recall: ask for 60 and filter after, and a narrow
+filter can leave three.
+
+Filters only ever narrow. Tenancy, not filters, is what bounds visibility.
+
+### Hybrid fusion: measured, not assumed
+
+`HYBRID_FUSION` selects how BM25 and vector rankings combine — `relative`
+(relativeScoreFusion, Weaviate's default) or `ranked` (reciprocal rank fusion).
+
+`eval/retrieval_benchmark.py` scores retrieval on its own, deterministically, against the
+`source` recorded for each golden question — no LLM judge, so it runs in seconds:
+
+```bash
+uv run python eval/retrieval_benchmark.py --compare --k 1 --tenant <tenant>
+```
+
+On a 142-chunk corpus (the 6 fixtures plus topic-adjacent Wikipedia distractors):
+
+| fusion | recall@1 | MRR@5 | nDCG@5 |
+|---|---|---|---|
+| relativeScoreFusion | **95.9%** | **0.973** | **0.980** |
+| rankedFusion (RRF) | 91.8% | 0.949 | 0.957 |
+
+RRF lost at every cutoff, so the default stays `relative`. The instinct behind RRF — use
+ranks, ignore incomparable score scales — is sound when fusing genuinely independent
+retrievers, but here BM25 is the noisier signal and RRF gives its ranking equal standing
+with the vector ranking's.
+
+Two caveats worth keeping in mind: the gap is ~2 questions out of 49, which is not
+statistically strong, and against the *original* 6-chunk fixture corpus the two strategies
+scored **identically** (every query returned the whole corpus, so recall was 100% by
+construction). That is why the distractors exist — a benchmark that can't fail can't choose.
 
 ## Ingestion
 

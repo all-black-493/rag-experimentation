@@ -20,6 +20,8 @@ jobs:
       - name: Write app env file
         run: |
           cat > .env <<EOF
+          # Embeddings and reranking run locally; this is only needed if a run
+          # sets EMBEDDING_PROVIDER/RERANKER_PROVIDER back to cohere.
           COHERE_API_KEY=${{ secrets.COHERE_API_KEY }}
           ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
           EOF

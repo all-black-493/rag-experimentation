@@ -9,8 +9,23 @@ class IngestUrlRequest(BaseModel):
     url: str
 
 
+class QueryFilters(BaseModel):
+    """Optional metadata restrictions, ANDed together.
+
+    Applied inside the Weaviate query rather than by trimming results after, so
+    a narrow filter still gets a full candidate pool to rank.
+    """
+
+    source_types: list[SourceType] = []
+    sources: list[str] = []
+    doc_ids: list[str] = []
+    page_from: int | None = None
+    page_to: int | None = None
+
+
 class QueryRequest(BaseModel):
     question: str
+    filters: QueryFilters | None = None
 
 
 class Citation(BaseModel):

@@ -6,6 +6,7 @@ import tiktoken
 from langchain_core.documents import Document
 
 from app.config import Settings
+from app.ingestion.parenting import window
 
 _ENCODING = tiktoken.get_encoding("cl100k_base")
 
@@ -57,8 +58,12 @@ def chunk_pdf_blocks(blocks: list[dict], settings: Settings) -> list[dict]:
     possible. Overlap is approximated by carrying the last block of a chunk
     into the next one, rather than an exact token count, since splitting mid-block
     would break the bbox-to-text correspondence a highlight depends on.
+
+    Sized to `child_chunk_size_tokens`: these are the small-to-big children, so
+    they stay tight enough that a bbox marks the lines that actually matched
+    rather than the union of a whole page's worth of blocks.
     """
-    chunk_size = settings.chunk_size_tokens
+    chunk_size = settings.child_chunk_size_tokens
     overlap = settings.chunk_overlap_tokens
 
     chunks: list[dict] = []
@@ -98,6 +103,24 @@ def chunk_pdf_blocks(blocks: list[dict], settings: Settings) -> list[dict]:
     return chunks
 
 
+def _attach_page_parents(chunks: list[dict], radius: int) -> None:
+    """Give every chunk its parent window, grouped per page.
+
+    Windows are built within a page rather than across the document: a chunk's
+    context is the surrounding text on the same page, and a window spanning a
+    page break would pull in unrelated material while the bbox still points at
+    one page.
+    """
+    by_page: dict[int, list[dict]] = {}
+    for chunk in chunks:
+        by_page.setdefault(chunk["page"], []).append(chunk)
+
+    for page_chunks in by_page.values():
+        texts = [c["text"] for c in page_chunks]
+        for i, chunk in enumerate(page_chunks):
+            chunk["parent_text"] = window(texts, i, radius)
+
+
 def render_page_thumbnails(path: Path, pages: Iterable[int], *, scale: float = 0.3) -> dict:
     """Render the given pages to small PNGs, keyed by page number.
 
@@ -123,6 +146,7 @@ def load_and_chunk_pdf(
     """Extract, chunk, and wrap a PDF's content as citation-ready Documents."""
     blocks = extract_pdf_blocks(path)
     chunks = chunk_pdf_blocks(blocks, settings)
+    _attach_page_parents(chunks, settings.parent_window_radius)
     return [
         Document(
             page_content=chunk["text"],
@@ -136,6 +160,9 @@ def load_and_chunk_pdf(
                 "page_width": chunk["page_width"],
                 "page_height": chunk["page_height"],
                 "thumbnail_url": f"/files/{doc_id}/thumbnail/{chunk['page']}",
+                # What the model reads; page_content stays the child so the
+                # bbox keeps marking the lines that actually matched.
+                "parent_text": chunk["parent_text"],
             },
         )
         for chunk in chunks

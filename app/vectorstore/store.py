@@ -19,6 +19,7 @@ CITATION_ATTRIBUTES = [
     "page_height",
     "favicon_url",
     "thumbnail_url",
+    "parent_text",
 ]
 
 

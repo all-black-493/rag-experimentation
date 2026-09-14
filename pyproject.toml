@@ -26,6 +26,12 @@ dependencies = [
     "python-docx>=1.2.0",
     "python-pptx>=1.0.2",
     "openpyxl>=3.1.5",
+    "sentence-transformers>=3.0",
+    # Declared directly so [tool.uv.sources] can pin it to the CPU wheel -
+    # source overrides only apply to a project's own dependencies, and as a
+    # transitive dep of sentence-transformers it resolved to the CUDA build.
+    "torch>=2.4",
+    "sentencepiece>=0.2.2",
 ]
 
 [tool.fastapi]
@@ -44,3 +50,14 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
+
+# CPU-only torch. The default wheel pulls ~3.2GB of CUDA libraries plus ~900MB of
+# triton, none of which a CPU inference container can use - it made the venv
+# 5.8GB instead of ~1.5GB.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }

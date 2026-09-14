@@ -14,11 +14,12 @@ from app.config import get_settings
 from app.jobs import JobRegistry
 from app.rate_limit import limiter
 from app.resilience import CircuitBreaker
-from app.retrieval.graph import build_graph
-from app.retrieval.reranker import build_reranker
+from app.retrieval.graph import HYBRID_FUSIONS, build_graph
+from app.retrieval.pairwise import PairwiseReranker
+from app.retrieval.reranker import build_reranker, warm_reranker
 from app.tracing import configure_tracing, shutdown_tracing
 from app.vectorstore.client import weaviate_client
-from app.vectorstore.embeddings import build_embeddings
+from app.vectorstore.embeddings import build_embeddings, warm_embeddings
 from app.vectorstore.store import build_vector_store
 
 
@@ -31,6 +32,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     embeddings = build_embeddings(settings)
     reranker = build_reranker(settings)
+    # Load the cross-encoder before serving, so the first query after a deploy
+    # doesn't pay for it inside the request.
+    warm_reranker(settings)
+    warm_embeddings(settings)
+    pairwise = (
+        PairwiseReranker(settings.pairwise_model, settings.pairwise_max_candidates)
+        if settings.pairwise_rerank_enabled
+        else None
+    )
     llm = ChatAnthropic(
         model=settings.generation_model,
         anthropic_api_key=settings.anthropic_api_key,
@@ -38,7 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_retries=settings.external_max_retries,
     )
     rerank_breaker = CircuitBreaker(
-        "cohere-rerank",
+        "rerank",
         failure_threshold=settings.circuit_breaker_failures,
         reset_seconds=settings.circuit_breaker_reset_seconds,
     )
@@ -61,6 +71,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             relevance_threshold=settings.rerank_relevance_threshold,
             rerank_breaker=rerank_breaker,
             retrieval_cache=retrieval_cache,
+            fusion=HYBRID_FUSIONS[settings.hybrid_fusion],
+            pairwise=pairwise,
         )
 
         try:
