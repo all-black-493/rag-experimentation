@@ -20,8 +20,14 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     generation_model: str = "claude-sonnet-5"
 
+    # Small-to-big: child_chunk_size_tokens is the unit that gets embedded and
+    # matched, and whose bbox a citation highlights. parent_window_radius
+    # neighbours either side form the window the model actually reads, so the
+    # effective context per citation is roughly child * (2 * radius + 1).
     chunk_size_tokens: int = 650
     chunk_overlap_tokens: int = 250
+    child_chunk_size_tokens: int = 200
+    parent_window_radius: int = 1
 
     # Hybrid retrieval: alpha blends Weaviate's native BM25 + vector search
     # (0 = pure keyword, 1 = pure vector). retrieval_candidates is the pool

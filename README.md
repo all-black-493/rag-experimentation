@@ -70,6 +70,34 @@ retrieve --(candidates)--> rerank --(any survive threshold?)--> generate -> veri
 4. **verify** — structured-output call checks the draft against the numbered context; an
    ungrounded answer is replaced by the decline message.
 
+### Small-to-big retrieval
+
+What gets embedded and matched is a small **child** (`CHILD_CHUNK_SIZE_TOKENS`, 200). What
+the model reads is the **parent window** — that child plus `PARENT_WINDOW_RADIUS` neighbours
+either side, denormalised onto the child at ingestion so there's no extra round trip per
+result at query time.
+
+Retrieval wants small chunks (a 650-token passage embeds to an average of everything in it,
+diluting the one relevant sentence); generation wants large ones (an isolated sentence has
+no referent for "the limit"). This takes both.
+
+It also buys the precise highlight. A citation's bbox is the child's box — the lines that
+actually matched — rather than the union of everything in a large chunk. Measured over a
+dense 3-page PDF:
+
+| | chunks | mean bbox | largest |
+|---|---|---|---|
+| 650-token chunks | 9 | 21.8% of page | 29.0% |
+| 200-token children | 36 | **3.4% of page** | 7.7% |
+
+Windows never cross a page (PDFs) or a source document (everything else): a window spanning
+a page break pulls in unrelated text while the bbox still points at one page.
+
+Note that `eval/retrieval_benchmark.py` scores *document-level* recall and shows small-to-big
+slightly behind (93.9% vs 95.9% recall@1) — with 5× more chunks there are 5× more competing
+distractors. That benchmark can't see what this change is for: passage precision, generation
+context, and highlight tightness. The arbiter for those is the faithfulness eval.
+
 ### Metadata filtering
 
 `POST /query` takes an optional `filters` object — `source_types`, `sources`, `doc_ids`,
