@@ -1,3 +1,7 @@
+import pytest
+from pydantic import ValidationError
+
+from app.config import Settings
 from app.dependencies import get_tenant
 from app.rate_limit import rate_limit_key
 
@@ -32,3 +36,25 @@ def test_rate_limit_key_prefers_session_header():
 def test_rate_limit_key_falls_back_to_ip_when_header_invalid():
     request = FakeRequest(headers={"x-session-id": "bad header!"})
     assert rate_limit_key(request) == "127.0.0.1"
+
+
+def test_default_chunk_settings_are_internally_consistent():
+    """The defaults must work with no .env at all.
+
+    A local override once masked an incompatible default here: overlap was
+    larger than the child chunk, which only failed in CI (no override) and only
+    at ingest time.
+    """
+    settings = Settings(_env_file=None)
+
+    assert settings.chunk_overlap_tokens < settings.child_chunk_size_tokens
+
+
+def test_overlap_larger_than_child_is_rejected():
+    with pytest.raises(ValidationError, match="must be smaller than"):
+        Settings(chunk_overlap_tokens=250, child_chunk_size_tokens=200)
+
+
+def test_negative_parent_radius_is_rejected():
+    with pytest.raises(ValidationError, match="cannot be negative"):
+        Settings(parent_window_radius=-1)

@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,7 +26,10 @@ class Settings(BaseSettings):
     # neighbours either side form the window the model actually reads, so the
     # effective context per citation is roughly child * (2 * radius + 1).
     chunk_size_tokens: int = 650
-    chunk_overlap_tokens: int = 250
+    # Must stay below child_chunk_size_tokens - the splitter refuses an overlap
+    # larger than the chunk it's overlapping. Validated below rather than left to
+    # be discovered on the first ingest.
+    chunk_overlap_tokens: int = 50
     child_chunk_size_tokens: int = 200
     parent_window_radius: int = 1
 
@@ -93,6 +97,25 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_base_url: str = "https://cloud.langfuse.com"
     langfuse_environment: str = "development"
+
+
+    @model_validator(mode="after")
+    def _check_chunking(self) -> "Settings":
+        """Reject chunk settings that can't produce chunks.
+
+        Caught here so a bad combination fails at startup, in every environment,
+        rather than surfacing as an ingestion error later. This exact mismatch
+        shipped once because a local .env override masked an incompatible
+        default - CI, which has no override, was the only place it showed up.
+        """
+        if self.chunk_overlap_tokens >= self.child_chunk_size_tokens:
+            raise ValueError(
+                f"chunk_overlap_tokens ({self.chunk_overlap_tokens}) must be smaller than "
+                f"child_chunk_size_tokens ({self.child_chunk_size_tokens})"
+            )
+        if self.parent_window_radius < 0:
+            raise ValueError("parent_window_radius cannot be negative")
+        return self
 
 
 @lru_cache
