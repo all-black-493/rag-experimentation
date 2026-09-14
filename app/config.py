@@ -17,6 +17,17 @@ class Settings(BaseSettings):
 
     cohere_api_key: str = ""
     embedding_model: str = "embed-v4.0"
+    # "local" runs sentence-transformers in-process; "cohere" calls the hosted
+    # API. Local by default: every ingest and query needs an embedding, so a
+    # provider quota is a hard dependency for the whole pipeline.
+    #
+    # Changing this invalidates the index. Vectors from different models have
+    # different dimensionality and geometry, so everything must be re-ingested.
+    embedding_provider: Literal["local", "cohere"] = "local"
+    local_embedding_model: str = "BAAI/bge-small-en-v1.5"
+    # BGE models are trained asymmetrically: queries carry this instruction,
+    # passages do not. Omitting it silently costs retrieval quality.
+    local_embedding_query_prefix: str = "Represent this sentence for searching relevant passages: "
 
     anthropic_api_key: str = ""
     generation_model: str = "claude-sonnet-5"
@@ -54,6 +65,11 @@ class Settings(BaseSettings):
     # down hard: recall is cheap at the retrieval stage and precision is what the
     # generator actually needs, so a large candidate pool feeding a small, firmly
     # thresholded top_n beats retrieving narrowly and keeping most of it.
+    # "local" runs a sentence-transformers cross-encoder in-process; "cohere"
+    # calls the hosted reranker. Local by default: it removes a per-query
+    # network call and a provider quota that can halt the pipeline outright.
+    reranker_provider: Literal["local", "cohere"] = "local"
+    cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_model: str = "rerank-v3.5"
     rerank_top_n: int = 5
     rerank_relevance_threshold: float = 0.35

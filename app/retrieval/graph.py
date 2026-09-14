@@ -2,7 +2,6 @@ import logging
 from functools import partial
 from typing import Literal
 
-from langchain_cohere import CohereRerank
 from langchain_core.documents import Document
 from langchain_core.language_models import BaseChatModel
 from langchain_weaviate import WeaviateVectorStore
@@ -17,6 +16,7 @@ from app.retrieval.citations import format_context
 from app.retrieval.filters import build_filter
 from app.retrieval.grounding import DECLINE_MESSAGE, VERIFY_PROMPT, GroundednessCheck
 from app.retrieval.prompts import GENERATION_PROMPT
+from app.retrieval.reranker import Reranker
 from app.retrieval.state import GraphState
 from app.tracing import linked_prompt, observation
 from app.vectorstore.store import tenant_exists
@@ -116,7 +116,7 @@ def retrieve(
 
 def rerank(
     state: GraphState,
-    reranker: CohereRerank,
+    reranker: Reranker,
     relevance_threshold: float,
     breaker: CircuitBreaker | None = None,
 ) -> dict:
@@ -243,7 +243,7 @@ def decline(state: GraphState) -> dict:
 def build_graph(
     vector_store: WeaviateVectorStore,
     client: WeaviateClient,
-    reranker: CohereRerank,
+    reranker: Reranker,
     llm: BaseChatModel,
     *,
     collection: str,

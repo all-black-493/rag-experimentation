@@ -98,6 +98,43 @@ slightly behind (93.9% vs 95.9% recall@1) — with 5× more chunks there are 5×
 distractors. That benchmark can't see what this change is for: passage precision, generation
 context, and highlight tightness. The arbiter for those is the faithfulness eval.
 
+### Local models (no provider quota)
+
+Embeddings and reranking both run in-process by default, so neither ingestion nor
+querying depends on a provider quota:
+
+| stage | default (`local`) | alternative (`cohere`) |
+|---|---|---|
+| embeddings | `BAAI/bge-small-en-v1.5` (384-dim) | `embed-v4.0` |
+| reranking | `cross-encoder/ms-marco-MiniLM-L-6-v2` | `rerank-v3.5` |
+
+Measured on CPU: reranking 60 candidates takes **181ms**, embedding 64 passages **178ms**,
+a query embedding **15ms**. Weights are baked into the image, so containers start without a
+download and need no outbound HuggingFace access.
+
+`torch` is pinned to the CPU wheel via `[tool.uv.sources]`. The default wheel drags in
+~3.2GB of CUDA libraries and ~900MB of triton that a CPU container cannot use — it made the
+virtualenv 5.8GB instead of 1.4GB. Note that source overrides only apply to a project's
+*own* dependencies, which is why `torch` is declared directly rather than left transitive.
+
+**Switching `EMBEDDING_PROVIDER` invalidates the index.** Vectors from different models have
+different dimensionality and geometry, so everything must be re-ingested. The embedding
+cache is keyed by model name, so stale vectors are never served across a switch.
+
+Retrieval quality against the same 735-chunk corpus, differing only in embedding model:
+
+| k | Cohere recall@k | local recall@k | Cohere MRR | local MRR |
+|---|---|---|---|---|
+| 1 | **93.9%** | 83.7% | **0.939** | 0.837 |
+| 3 | 95.9% | **98.0%** | **0.949** | 0.905 |
+| 5 | 95.9% | **100.0%** | **0.949** | 0.909 |
+
+Local is worse at putting the right document *first* (-10pp at k=1) but better at getting it
+into the top 5 at all. Since the pipeline retrieves 60 candidates and reranks down to 5,
+top-5 recall is the more decision-relevant number — the cross-encoder re-scores whatever the
+vector stage surfaces. If rank-1 precision matters more for your traffic,
+`bge-base-en-v1.5` (768-dim) is the obvious next step up.
+
 ### Metadata filtering
 
 `POST /query` takes an optional `filters` object — `source_types`, `sources`, `doc_ids`,

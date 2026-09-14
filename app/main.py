@@ -15,10 +15,10 @@ from app.jobs import JobRegistry
 from app.rate_limit import limiter
 from app.resilience import CircuitBreaker
 from app.retrieval.graph import HYBRID_FUSIONS, build_graph
-from app.retrieval.reranker import build_reranker
+from app.retrieval.reranker import build_reranker, warm_reranker
 from app.tracing import configure_tracing, shutdown_tracing
 from app.vectorstore.client import weaviate_client
-from app.vectorstore.embeddings import build_embeddings
+from app.vectorstore.embeddings import build_embeddings, warm_embeddings
 from app.vectorstore.store import build_vector_store
 
 
@@ -31,6 +31,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     embeddings = build_embeddings(settings)
     reranker = build_reranker(settings)
+    # Load the cross-encoder before serving, so the first query after a deploy
+    # doesn't pay for it inside the request.
+    warm_reranker(settings)
+    warm_embeddings(settings)
     llm = ChatAnthropic(
         model=settings.generation_model,
         anthropic_api_key=settings.anthropic_api_key,
