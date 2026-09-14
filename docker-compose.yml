@@ -52,6 +52,13 @@ services:
       CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
     volumes:
       - pdf_uploads:/app/data/uploads
+      # The caches have to outlive the container or they aren't caches. Without
+      # these, every `up --build` discards the embedding cache and the next
+      # ingest re-embeds content that was already paid for - which is how a
+      # month of provider quota disappears into repeated rebuilds.
+      - embedding_cache:/app/data/embeddings
+      - favicon_cache:/app/data/favicons
+      - thumbnail_cache:/app/data/thumbnails
     depends_on:
       weaviate:
         condition: service_healthy
@@ -60,3 +67,6 @@ services:
 volumes:
   weaviate_data:
   pdf_uploads:
+  embedding_cache:
+  favicon_cache:
+  thumbnail_cache:
