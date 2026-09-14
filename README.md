@@ -135,6 +135,32 @@ top-5 recall is the more decision-relevant number — the cross-encoder re-score
 vector stage surfaces. If rank-1 precision matters more for your traffic,
 `bge-base-en-v1.5` (768-dim) is the obvious next step up.
 
+### Multi-stage reranking
+
+```
+hybrid search (60)  →  cross-encoder (→5)  →  [optional] duoT5 pairwise (reorder 5)
+```
+
+Stage 2 scores each passage against the query independently — it can say "both look
+relevant" but never "this one more than that one". Stage 3 (`PAIRWISE_RERANK_ENABLED`) is
+duoT5, trained on exactly that comparison, and catches orderings pointwise scoring can't
+express. A worked case:
+
+| stage | top result |
+|---|---|
+| after cross-encoder | "**international** travel capped at $250" |
+| after duoT5 pairwise | "maximum nightly rate for **domestic** travel is $150" |
+
+**Off by default, because it's quadratic.** Every ordered pair costs a forward pass: k=5 is
+20 comparisons, k=10 is 90, k=20 is 380. Measured at k=5 on CPU it adds **~2.0s per query**,
+roughly doubling end-to-end latency. It runs strictly *after* the cross-encoder has cut 60
+down to a few — never over a candidate pool — and a failure degrades to stage-2 order rather
+than failing the query.
+
+Note that monoT5's role (pointwise neural relevance) is already filled by the MiniLM
+cross-encoder, which does the same job faster and smaller. Enabling stage 3 downloads the
+duoT5 weights (~900MB); they aren't baked into the image since the stage is off by default.
+
 ### Metadata filtering
 
 `POST /query` takes an optional `filters` object — `source_types`, `sources`, `doc_ids`,

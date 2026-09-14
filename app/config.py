@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     reranker_provider: Literal["local", "cohere"] = "local"
     cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rerank_model: str = "rerank-v3.5"
+    # Optional third stage: duoT5 pairwise refinement over the finalists.
+    # Off by default because it is quadratic - k candidates cost k*(k-1)
+    # forward passes - so it is only ever worth running on a short list the
+    # cross-encoder has already narrowed.
+    pairwise_rerank_enabled: bool = False
+    pairwise_model: str = "castorini/duot5-base-msmarco"
+    pairwise_max_candidates: int = 5
     rerank_top_n: int = 5
     rerank_relevance_threshold: float = 0.35
 

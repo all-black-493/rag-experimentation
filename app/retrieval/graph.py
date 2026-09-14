@@ -15,6 +15,7 @@ from app.resilience import CircuitBreaker, CircuitOpenError
 from app.retrieval.citations import format_context
 from app.retrieval.filters import build_filter
 from app.retrieval.grounding import DECLINE_MESSAGE, VERIFY_PROMPT, GroundednessCheck
+from app.retrieval.pairwise import PairwiseReranker
 from app.retrieval.prompts import GENERATION_PROMPT
 from app.retrieval.reranker import Reranker
 from app.retrieval.state import GraphState
@@ -30,6 +31,10 @@ HYBRID_FUSIONS = {
     "relative": HybridFusion.RELATIVE_SCORE,
     "ranked": HybridFusion.RANKED,
 }
+
+# Named for the stage, not the vendor: the reranker is pluggable, and a span
+# labelled with the wrong provider is worse than an unlabelled one.
+RERANK_SPAN_NAME = "rerank-cross-encoder"
 
 # How many hybrid-search results to keep when the reranker is unavailable.
 _RERANK_FALLBACK_TOP_N = 5
@@ -119,11 +124,12 @@ def rerank(
     reranker: Reranker,
     relevance_threshold: float,
     breaker: CircuitBreaker | None = None,
+    pairwise: PairwiseReranker | None = None,
 ) -> dict:
     candidates = state["documents"]
     with observation(
         as_type="retriever",
-        name="cohere-rerank",
+        name=RERANK_SPAN_NAME,
         input={
             "question": state["question"],
             # Ordering in, so the reordering is visible against what came out.
@@ -162,6 +168,15 @@ def rerank(
         # Where each survivor sat before reranking, so a reorder is legible at a
         # glance rather than by eyeballing two lists side by side. Keyed by content
         # rather than identity: compress_documents returns copies, not the originals.
+        # Stage 3, over the finalists only. Failure here degrades to stage 2's
+        # ordering rather than failing the query: a refinement that can't run is
+        # not a reason to lose an answer.
+        if pairwise is not None and relevant:
+            try:
+                relevant = pairwise.rerank(relevant, state["question"])
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("pairwise rerank unavailable (%s); keeping stage-2 order", exc)
+
         original_position = {_identity(doc): i for i, doc in enumerate(candidates, start=1)}
         span.update(
             output=[
@@ -177,6 +192,7 @@ def rerank(
                 "candidates": len(candidates),
                 "kept": len(relevant),
                 "dropped_below_threshold": len(reranked) - len(relevant),
+                "pairwise": pairwise is not None,
             },
         )
         return {"documents": relevant}
@@ -253,6 +269,7 @@ def build_graph(
     rerank_breaker: CircuitBreaker | None = None,
     retrieval_cache: TTLCache | None = None,
     fusion: object | None = None,
+    pairwise: PairwiseReranker | None = None,
 ) -> CompiledStateGraph:
     graph = StateGraph(GraphState)
     graph.add_node(
@@ -275,6 +292,7 @@ def build_graph(
             reranker=reranker,
             relevance_threshold=relevance_threshold,
             breaker=rerank_breaker,
+            pairwise=pairwise,
         ),
     )
     graph.add_node("generate", partial(generate, llm=llm))

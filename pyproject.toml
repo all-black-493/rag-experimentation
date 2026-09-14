@@ -31,6 +31,7 @@ dependencies = [
     # source overrides only apply to a project's own dependencies, and as a
     # transitive dep of sentence-transformers it resolved to the CUDA build.
     "torch>=2.4",
+    "sentencepiece>=0.2.2",
 ]
 
 [tool.fastapi]
