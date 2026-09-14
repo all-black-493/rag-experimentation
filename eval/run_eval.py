@@ -32,6 +32,7 @@ sys.path.insert(0, str(EVAL_DIR.parent))
 from app.scoring import citation_coverage
 
 HEALTH_TIMEOUT_SECONDS = 60
+INGEST_TIMEOUT_SECONDS = 300
 CONCURRENCY = 5
 JUDGE_MAX_TOKENS = 4096
 
@@ -112,12 +113,35 @@ async def wait_for_health(client: httpx.AsyncClient, timeout: float) -> None:
     raise RuntimeError(f"API did not become healthy within {timeout}s")
 
 
+async def await_job(client: httpx.AsyncClient, job: dict, timeout: float) -> dict:
+    """Poll an ingestion job until it settles.
+
+    Ingestion is asynchronous: the upload returns 202 with the document not yet
+    indexed. Without this the eval would query an empty index and report every
+    answer as a decline - a total failure that looks like a quality collapse
+    rather than a harness bug.
+    """
+    deadline = time.monotonic() + timeout
+    while job["status"] in ("queued", "running"):
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"ingestion job for {job['source']} did not finish in {timeout}s")
+        await asyncio.sleep(1)
+        response = await client.get(f"/ingest/jobs/{job['job_id']}")
+        response.raise_for_status()
+        job = response.json()
+
+    if job["status"] == "failed":
+        raise RuntimeError(f"ingestion failed for {job['source']}: {job['error']}")
+    return job
+
+
 async def ingest_fixtures(client: httpx.AsyncClient, fixtures_dir: Path) -> None:
     for path in sorted(fixtures_dir.glob("*.md")):
         with path.open("rb") as f:
             response = await client.post("/ingest/file", files={"file": (path.name, f)})
         response.raise_for_status()
-        print(f"ingested {path.name}: {response.json()['chunks_indexed']} chunks")
+        job = await await_job(client, response.json(), INGEST_TIMEOUT_SECONDS)
+        print(f"ingested {path.name}: {job['chunks_indexed']} chunks")
 
 
 async def score_sample(
