@@ -25,7 +25,7 @@ def test_promotes_the_pairwise_winner():
 
     result = reranker.rerank(documents, "domestic hotel rate")
 
-    assert [d.page_content for d in result][0] == "domestic $150"
+    assert result[0].page_content == "domestic $150"
 
 
 def test_records_the_score_it_ranked_on():
