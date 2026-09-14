@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     generation_model: str = "claude-sonnet-5"
 
     chunk_size_tokens: int = 650
-    chunk_overlap_tokens: int = 100
+    chunk_overlap_tokens: int = 250
 
     # Hybrid retrieval: alpha blends Weaviate's native BM25 + vector search
     # (0 = pure keyword, 1 = pure vector). retrieval_candidates is the pool
@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     rate_limit_query: str = "30/minute"
 
     max_upload_size_mb: int = 20
+
+    # How many documents index at once. Bounded because the embedding provider
+    # is rate-limited: more parallelism here buys 429s and retry backoff, not
+    # throughput.
+    ingest_concurrency: int = 2
 
     # Malware scanning. Off by default: ClamAV's signature database makes the
     # image heavy and slow to become ready. When on, an unreachable scanner

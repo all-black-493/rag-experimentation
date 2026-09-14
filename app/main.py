@@ -11,6 +11,7 @@ from slowapi.middleware import SlowAPIASGIMiddleware
 from app.api.routes import favicons, files, ingestion, query, thumbnails
 from app.caching import TTLCache, enable_llm_cache
 from app.config import get_settings
+from app.jobs import JobRegistry
 from app.rate_limit import limiter
 from app.resilience import CircuitBreaker
 from app.retrieval.graph import build_graph
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.vector_store = vector_store
         retrieval_cache = TTLCache(settings.retrieval_cache_ttl_seconds)
         app.state.retrieval_cache = retrieval_cache
+        app.state.jobs = JobRegistry(max_concurrency=settings.ingest_concurrency)
         app.state.graph = build_graph(
             vector_store,
             client,

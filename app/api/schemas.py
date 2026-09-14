@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 from app.metadata import SourceType
@@ -5,11 +7,6 @@ from app.metadata import SourceType
 
 class IngestUrlRequest(BaseModel):
     url: str
-
-
-class IngestResponse(BaseModel):
-    source: str
-    chunks_indexed: int
 
 
 class QueryRequest(BaseModel):
@@ -34,3 +31,13 @@ class Citation(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     citations: list[Citation]
+
+
+class JobResponse(BaseModel):
+    """An ingestion job's state. Returned on submission and when polling."""
+
+    job_id: str
+    source: str
+    status: Literal["queued", "running", "succeeded", "failed"]
+    chunks_indexed: int | None = None
+    error: str | None = None

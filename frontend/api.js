@@ -58,19 +58,44 @@ async function request(path, options = {}) {
   return response.json();
 }
 
+// Ingestion returns a job immediately and indexes in the background, so the
+// client polls until the job settles. Backs off from a snappy first check to a
+// slower cadence, since a large document can take minutes and there's no point
+// asking twice a second for all of it.
+const POLL_INTERVAL_MS = 700;
+const POLL_MAX_INTERVAL_MS = 4000;
+
+async function awaitJob(job) {
+  let job_state = job;
+  let interval = POLL_INTERVAL_MS;
+
+  while (job_state.status === "queued" || job_state.status === "running") {
+    await new Promise((resolve) => setTimeout(resolve, interval));
+    interval = Math.min(interval * 1.5, POLL_MAX_INTERVAL_MS);
+    job_state = await request(`/ingest/jobs/${job_state.job_id}`);
+  }
+
+  if (job_state.status === "failed") {
+    throw new Error(job_state.error || "Indexing failed.");
+  }
+  return job_state;
+}
+
 const api = {
-  ingestFile(file) {
+  async ingestFile(file) {
     const body = new FormData();
     body.append("file", file);
-    return request("/ingest/file", { method: "POST", body });
+    return awaitJob(await request("/ingest/file", { method: "POST", body }));
   },
 
-  ingestUrl(url) {
-    return request("/ingest/url", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-    });
+  async ingestUrl(url) {
+    return awaitJob(
+      await request("/ingest/url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      }),
+    );
   },
 
   query(question) {

@@ -7,6 +7,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.caching import TTLCache
 from app.config import Settings, get_settings
+from app.jobs import JobRegistry
 
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _DEFAULT_TENANT = "default"
@@ -22,6 +23,10 @@ def get_graph(request: Request) -> CompiledStateGraph:
 
 def get_retrieval_cache(request: Request) -> TTLCache:
     return request.app.state.retrieval_cache
+
+
+def get_jobs(request: Request) -> JobRegistry:
+    return request.app.state.jobs
 
 
 def get_tenant(x_session_id: Annotated[str | None, Header()] = None) -> str:
@@ -41,4 +46,5 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 VectorStoreDep = Annotated[WeaviateVectorStore, Depends(get_vector_store)]
 GraphDep = Annotated[CompiledStateGraph, Depends(get_graph)]
 RetrievalCacheDep = Annotated[TTLCache, Depends(get_retrieval_cache)]
+JobsDep = Annotated[JobRegistry, Depends(get_jobs)]
 TenantDep = Annotated[str, Depends(get_tenant)]

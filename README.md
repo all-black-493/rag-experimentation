@@ -39,8 +39,9 @@ All configuration is environment-driven — see `.env.example` for the full list
 
 | Endpoint | Notes |
 |---|---|
-| `POST /ingest/file` | `.pdf`, `.txt`, `.md`. Magic-byte, size, and encoding checks run before any parser touches the bytes; failures return `400` with a reason. |
-| `POST /ingest/url` | `{"url": "..."}` — scrapes and indexes a page. |
+| `POST /ingest/file` | Returns `202` with a job id and indexes in the background. Validation and the malware scan run first, synchronously, so a bad file still gets an immediate `400`. |
+| `POST /ingest/url` | `{"url": "..."}` — same, `202` plus a job id. |
+| `GET /ingest/jobs/{job_id}` | Job status: `queued`, `running`, `succeeded`, `failed`. Scoped to the session that created it; another session gets `404`. |
 | `POST /query` | `{"question": "..."}` → `{answer, citations}`. Inline `[1]`, `[2]` markers match `citations[i].index`. Returns a fixed decline message with no citations if nothing relevant is retrieved or the answer fails the groundedness check. |
 | `GET /files/{doc_id}` | The original PDF, session-scoped. Supports range requests. 404s (not 403) on a wrong session, so existence never leaks. |
 | `GET /files/{doc_id}/thumbnail/{page}` | Rendered page image for the hover preview, session-scoped. |
@@ -90,6 +91,16 @@ Accepts `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.tsv`, `.json`, `.html`, `.m
 Ingestion is **content-addressed**: the doc id is a hash of the bytes, so re-uploading the
 same file is idempotent — it skips parsing, chunking and embedding entirely rather than
 indexing a second copy. Identical content is never re-embedded.
+
+It's also **asynchronous**. The request returns a job id in ~50ms instead of holding the
+connection open for the whole index (~2s for a small text file, minutes for a large PDF);
+the client polls `/ingest/jobs/{id}`. Concurrency is bounded (`INGEST_CONCURRENCY`, default
+2) because the embedding provider is rate-limited — more parallelism buys 429s and retry
+backoff, not throughput.
+
+Jobs live in the app process: a restart loses in-flight work, and status is only known to
+the instance that accepted it. That's fine for one container, and `JobRegistry` is the seam
+to swap for Redis/Celery when there's more than one.
 
 ## Citations
 
