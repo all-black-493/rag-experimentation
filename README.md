@@ -60,12 +60,54 @@ retrieve --(candidates)--> rerank --(any survive threshold?)--> generate -> veri
                                           (verify says ungrounded)
 ```
 
-1. **retrieve** — Weaviate hybrid search scoped to the tenant. A tenant that has never
-   written anything short-circuits rather than querying a tenant that doesn't exist.
-2. **rerank** — Cohere cross-encoder; chunks below `RERANK_RELEVANCE_THRESHOLD` are dropped.
+1. **retrieve** — Weaviate hybrid search (BM25 + vector) scoped to the tenant, with optional
+   metadata filters pushed into the query. A tenant that has never written anything
+   short-circuits rather than querying a tenant that doesn't exist.
+2. **rerank** — Cohere cross-encoder over 60 candidates, keeping 5 above
+   `RERANK_RELEVANCE_THRESHOLD`. Behind a circuit breaker: if it's unavailable, retrieval
+   order is used instead of failing the query.
 3. **generate** — drafts a cited answer, or routes straight to **decline** if nothing survived.
 4. **verify** — structured-output call checks the draft against the numbered context; an
    ungrounded answer is replaced by the decline message.
+
+### Metadata filtering
+
+`POST /query` takes an optional `filters` object — `source_types`, `sources`, `doc_ids`,
+`page_from`/`page_to`, ANDed. They become Weaviate `Filter` objects pushed into the hybrid
+query, so filtering happens **before** ranking. Post-filtering a fixed candidate pool is the
+tempting shortcut and it silently destroys recall: ask for 60 and filter after, and a narrow
+filter can leave three.
+
+Filters only ever narrow. Tenancy, not filters, is what bounds visibility.
+
+### Hybrid fusion: measured, not assumed
+
+`HYBRID_FUSION` selects how BM25 and vector rankings combine — `relative`
+(relativeScoreFusion, Weaviate's default) or `ranked` (reciprocal rank fusion).
+
+`eval/retrieval_benchmark.py` scores retrieval on its own, deterministically, against the
+`source` recorded for each golden question — no LLM judge, so it runs in seconds:
+
+```bash
+uv run python eval/retrieval_benchmark.py --compare --k 1 --tenant <tenant>
+```
+
+On a 142-chunk corpus (the 6 fixtures plus topic-adjacent Wikipedia distractors):
+
+| fusion | recall@1 | MRR@5 | nDCG@5 |
+|---|---|---|---|
+| relativeScoreFusion | **95.9%** | **0.973** | **0.980** |
+| rankedFusion (RRF) | 91.8% | 0.949 | 0.957 |
+
+RRF lost at every cutoff, so the default stays `relative`. The instinct behind RRF — use
+ranks, ignore incomparable score scales — is sound when fusing genuinely independent
+retrievers, but here BM25 is the noisier signal and RRF gives its ranking equal standing
+with the vector ranking's.
+
+Two caveats worth keeping in mind: the gap is ~2 questions out of 49, which is not
+statistically strong, and against the *original* 6-chunk fixture corpus the two strategies
+scored **identically** (every query returned the whole corpus, so recall was 100% by
+construction). That is why the distractors exist — a benchmark that can't fail can't choose.
 
 ## Ingestion
 
