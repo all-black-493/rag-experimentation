@@ -12,6 +12,7 @@ from app.api.routes import favicons, files, ingestion, query, sources, thumbnail
 from app.caching import TTLCache, enable_llm_cache
 from app.config import get_settings
 from app.jobs import JobRegistry
+from app.proxy_auth import require_proxy_secret
 from app.rate_limit import limiter
 from app.resilience import CircuitBreaker
 from app.retrieval.graph import HYBRID_FUSIONS, build_graph
@@ -126,5 +127,8 @@ async def revalidate_frontend_assets(request: Request, call_next):
         response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
+
+# Registered last so it runs first: nothing below is reachable without the secret.
+app.middleware("http")(require_proxy_secret)
 
 app.frontend("/", directory=FRONTEND_DIR)

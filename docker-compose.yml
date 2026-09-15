@@ -50,6 +50,8 @@ services:
       # leaves scanning off when you believe you turned it on.
       MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-false}
       CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
+      # Same passthrough, for exercising the proxy gate locally.
+      PROXY_SECRET: ${PROXY_SECRET:-}
     volumes:
       - pdf_uploads:/app/data/uploads
       # The caches have to outlive the container or they aren't caches. Without

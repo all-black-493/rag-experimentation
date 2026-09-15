@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     generation_model: str = "claude-sonnet-5"
 
+    # When set, every request except /health must carry it in X-Proxy-Secret.
+    # Set in deployments where the API sits behind a trusted proxy (see
+    # app.proxy_auth); leave empty for local development.
+    proxy_secret: str = ""
+
     # Small-to-big: child_chunk_size_tokens is the unit that gets embedded and
     # matched, and whose bbox a citation highlights. parent_window_radius
     # neighbours either side form the window the model actually reads, so the

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "include": [
+    "/query",
+    "/ingest/*",
+    "/sources",
+    "/sources/*",
+    "/files/*",
+    "/favicons/*",
+    "/thumbnails/*"
+  ],
+  "exclude": []
+}

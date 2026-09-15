@@ -1,0 +1,9 @@
+# Cloudflare Pages project for the frontend. The static files in frontend/ are
+# served as-is; functions/ proxies API paths to the backend on Render.
+name = "rag-console"
+compatibility_date = "2026-09-01"
+pages_build_output_dir = "frontend"
+
+# BACKEND_URL and PROXY_SECRET are set on the Pages project, not here:
+#   wrangler pages secret put PROXY_SECRET
+#   (BACKEND_URL as a plain variable in the dashboard, or in .dev.vars locally)
