@@ -12,7 +12,9 @@ services:
     name: rag-weaviate
     runtime: image
     image:
-      url: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+      # Docker Hub, not cr.weaviate.io: Render can only pull from the registries it
+      # supports, and its validator rejects the Weaviate registry outright.
+      url: docker.io/semitechnologies/weaviate:1.28.4
     plan: starter
     region: frankfurt
     # Mirrors docker-compose.yml. Anonymous access is fine: a private service
