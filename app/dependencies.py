@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import Depends, Header, Request
 from langchain_weaviate import WeaviateVectorStore
 from langgraph.graph.state import CompiledStateGraph
+from weaviate.client import WeaviateClient
 
 from app.caching import TTLCache
 from app.config import Settings, get_settings
@@ -19,6 +20,10 @@ def get_vector_store(request: Request) -> WeaviateVectorStore:
 
 def get_graph(request: Request) -> CompiledStateGraph:
     return request.app.state.graph
+
+
+def get_weaviate_client(request: Request) -> WeaviateClient:
+    return request.app.state.weaviate_client
 
 
 def get_retrieval_cache(request: Request) -> TTLCache:
@@ -44,6 +49,7 @@ def get_tenant(x_session_id: Annotated[str | None, Header()] = None) -> str:
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 VectorStoreDep = Annotated[WeaviateVectorStore, Depends(get_vector_store)]
+WeaviateClientDep = Annotated[WeaviateClient, Depends(get_weaviate_client)]
 GraphDep = Annotated[CompiledStateGraph, Depends(get_graph)]
 RetrievalCacheDep = Annotated[TTLCache, Depends(get_retrieval_cache)]
 JobsDep = Annotated[JobRegistry, Depends(get_jobs)]

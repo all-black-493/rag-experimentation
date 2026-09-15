@@ -438,6 +438,53 @@ body {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Always visible rather than revealed on hover: a phone has no hover, and a
+   control you can only find by accident isn't a control. Low contrast until
+   hovered or focused keeps it from competing with the document's name. */
+.source-item__remove {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  /* Negative margin so the larger hit area doesn't inflate the row's height. */
+  margin: -4px -4px -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.source-item__remove:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-surface);
+}
+
+.source-item__remove:focus-visible {
+  outline: none;
+  color: var(--danger);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.source-item__remove:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Touch targets need to be reachable with a thumb, not a cursor. */
+@media (pointer: coarse) {
+  .source-item__remove {
+    width: 44px;
+    height: 44px;
+    margin-block: -12px;
+  }
 }
 
 .empty-state {

@@ -20,24 +20,81 @@ function chunkLabel(chunkCount) {
   return `${chunkCount} chunk${chunkCount === 1 ? "" : "s"}`;
 }
 
-function addSourceToList(name, chunkCount) {
-  const placeholder = sourcesList.querySelector("[data-placeholder]");
-  if (placeholder) placeholder.remove();
+// Static markup, no interpolation - safe to set as innerHTML.
+const REMOVE_ICON = `
+  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
+       stroke-width="1.5" stroke-linecap="round" aria-hidden="true" focusable="false">
+    <path d="M4 4l8 8M12 4l-8 8" />
+  </svg>`;
 
+// The list is rendered from the server's answer rather than from what this page
+// happened to upload, so it survives a reload and can't drift from what the
+// model can actually see.
+async function refreshSources() {
+  try {
+    renderSources(await api.listSources());
+  } catch {
+    // The list is a convenience; a failure here shouldn't replace the ingest
+    // status message the user is currently reading.
+  }
+}
+
+function renderSources(sources) {
+  if (sources.length === 0) {
+    const placeholder = document.createElement("li");
+    placeholder.className = "empty-state";
+    placeholder.dataset.placeholder = "";
+    placeholder.textContent = "Nothing added yet.";
+    sourcesList.replaceChildren(placeholder);
+    return;
+  }
+  sourcesList.replaceChildren(...sources.map(buildSourceItem));
+}
+
+function buildSourceItem(source) {
   const item = document.createElement("li");
   item.className = "source-item";
 
   const nameEl = document.createElement("span");
   nameEl.className = "source-item__name";
-  nameEl.textContent = name;
-  nameEl.title = name;
+  nameEl.textContent = source.source;
+  nameEl.title = source.source;
 
   const countEl = document.createElement("span");
   countEl.className = "source-item__count";
-  countEl.textContent = chunkLabel(chunkCount);
+  countEl.textContent = chunkLabel(source.chunks);
 
-  item.append(nameEl, countEl);
-  sourcesList.prepend(item);
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.className = "source-item__remove";
+  removeButton.innerHTML = REMOVE_ICON;
+  // Icon-only, so the label carries the meaning for screen readers - and names
+  // the document, since the list holds several identical-looking buttons.
+  removeButton.setAttribute("aria-label", `Remove ${source.source}`);
+  removeButton.title = `Remove ${source.source}`;
+  removeButton.addEventListener("click", () => removeSource(source, removeButton));
+
+  item.append(nameEl, countEl, removeButton);
+  return item;
+}
+
+async function removeSource(source, button) {
+  const confirmed = window.confirm(
+    `Remove "${source.source}"? Its ${chunkLabel(source.chunks)} will be deleted and ` +
+      `answers will no longer draw on it.`,
+  );
+  if (!confirmed) return;
+
+  button.disabled = true;
+  setStatus(`Removing ${source.source}…`, "pending");
+  try {
+    await api.deleteSource(source.doc_id);
+    await refreshSources();
+    setStatus(`Removed ${source.source}.`, "success");
+  } catch (error) {
+    button.disabled = false;
+    setStatus(error.message, "error");
+  }
 }
 
 const MAX_FILES_PER_BATCH = 5;
@@ -64,7 +121,7 @@ async function runBatchIngest(items, ingestOne, describeItem) {
 
     try {
       const result = await ingestOne(items[i]);
-      addSourceToList(result.source, result.chunks_indexed);
+      await refreshSources();
       chunksTotal += result.chunks_indexed;
     } catch (error) {
       failures.push({ item: describeItem(items[i]), message: error.message });
@@ -430,3 +487,8 @@ askForm.addEventListener("submit", async (event) => {
     questionInput.focus();
   }
 });
+
+// Anything indexed in an earlier visit is still queryable, so show it on load -
+// otherwise the sidebar claims the session is empty while the model can see a
+// dozen documents.
+refreshSources();
