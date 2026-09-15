@@ -1,11 +1,15 @@
+import logging
 import re
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 UPLOADS_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads"
 
-DOC_ID_PATTERN = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
-)
+# Must match what app.ingestion.dedupe.content_id produces - a truncated sha256,
+# not a uuid. Every doc_id arriving from a request is checked against this before
+# it is used to build a path, so it can never walk out of the tenant's directory.
+DOC_ID_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 def save_pdf(tenant: str, doc_id: str, content: bytes) -> Path:
@@ -45,3 +49,27 @@ def get_page_thumbnail_path(tenant: str, doc_id: str, page: int) -> Path | None:
         return None
     path = UPLOADS_DIR / tenant / f"{doc_id}.p{page}.png"
     return path if path.is_file() else None
+
+
+def delete_document_files(tenant: str, doc_id: str) -> int:
+    """Remove a document's stored PDF and every page thumbnail. Returns files removed.
+
+    Thumbnails are globbed rather than enumerated: only cited pages are rendered,
+    so how many exist isn't knowable from the doc_id alone.
+    """
+    if not DOC_ID_PATTERN.match(doc_id):
+        return 0
+
+    tenant_dir = UPLOADS_DIR / tenant
+    removed = 0
+    for path in [tenant_dir / f"{doc_id}.pdf", *tenant_dir.glob(f"{doc_id}.p*.png")]:
+        try:
+            path.unlink()
+            removed += 1
+        except FileNotFoundError:
+            # A non-PDF source has no stored file; nothing to remove.
+            pass
+        except OSError:
+            # One file we can't remove shouldn't abort the rest of the deletion.
+            logger.warning("could not remove %s", path, exc_info=True)
+    return removed

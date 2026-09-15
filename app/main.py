@@ -8,7 +8,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIASGIMiddleware
 
-from app.api.routes import favicons, files, ingestion, query, thumbnails
+from app.api.routes import favicons, files, ingestion, query, sources, thumbnails
 from app.caching import TTLCache, enable_llm_cache
 from app.config import get_settings
 from app.jobs import JobRegistry
@@ -57,6 +57,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         vector_store = build_vector_store(client, embeddings, settings)
 
         app.state.vector_store = vector_store
+        # Deleting a document needs the raw client: the vector store abstraction
+        # can write chunks but not remove them.
+        app.state.weaviate_client = client
         retrieval_cache = TTLCache(settings.retrieval_cache_ttl_seconds)
         app.state.retrieval_cache = retrieval_cache
         app.state.jobs = JobRegistry(max_concurrency=settings.ingest_concurrency)
@@ -92,6 +95,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.include_router(ingestion.router)
 app.include_router(query.router)
 app.include_router(files.router)
+app.include_router(sources.router)
 app.include_router(favicons.router)
 app.include_router(thumbnails.router)
 

@@ -40,30 +40,56 @@ def ingest_file(
         return previous["chunks"]
 
     if path.suffix.lower() == ".pdf":
+        source_type = "pdf"
         save_pdf(tenant, doc_id, content)
         chunks = load_and_chunk_pdf(path, settings, doc_id=doc_id, display_name=name)
         cited_pages = {chunk.metadata["page"] for chunk in chunks}
         for page, thumbnail in render_page_thumbnails(path, cited_pages).items():
             save_page_thumbnail(tenant, doc_id, page, thumbnail)
     else:
+        source_type = "text"
         documents = load_path(path)
         for document in documents:
             document.metadata["source"] = name
             document.metadata["title"] = name
+            # Carried onto every chunk so the document can be deleted precisely
+            # later; two uploads can share a display name, but not an id.
+            document.metadata["doc_id"] = doc_id
         chunks = chunk_documents(documents, settings)
 
     if chunks:
         vector_store.add_documents(chunks, tenant=tenant)
     # Recorded only after a successful index, so a failed run is retried in full
     # rather than remembered as done.
-    record_ingestion(UPLOADS_DIR, tenant, doc_id, source=name, chunks=len(chunks))
+    record_ingestion(
+        UPLOADS_DIR, tenant, doc_id, source=name, source_type=source_type, chunks=len(chunks)
+    )
     return len(chunks)
 
 
 def ingest_url(url: str, vector_store: WeaviateVectorStore, settings: Settings, *, tenant: str) -> int:
-    """Fetch, chunk, and index a web page. Returns the number of chunks written."""
+    """Fetch, chunk, and index a web page. Returns the number of chunks written.
+
+    Keyed on the URL rather than on the fetched bytes, unlike a file: a page that
+    changed between two fetches is still the same source to the reader, and adding
+    a link twice should be a no-op rather than a second copy of the page. Removing
+    the source and adding it again is how to pick up a page that has changed.
+    """
+    doc_id = content_id(url.encode())
+
+    previous = already_ingested(UPLOADS_DIR, tenant, doc_id)
+    if previous is not None:
+        logger.info("skipping %s - already indexed as %s", url, doc_id)
+        return previous["chunks"]
+
     documents = load_web(url)
+    for document in documents:
+        document.metadata["doc_id"] = doc_id
     chunks = chunk_documents(documents, settings)
+
     if chunks:
         vector_store.add_documents(chunks, tenant=tenant)
+    record_ingestion(
+        UPLOADS_DIR, tenant, doc_id, source=url, source_type="web", chunks=len(chunks)
+    )
     return len(chunks)

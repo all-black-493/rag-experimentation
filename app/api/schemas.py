@@ -48,6 +48,15 @@ class QueryResponse(BaseModel):
     citations: list[Citation]
 
 
+class SourceSummary(BaseModel):
+    """One indexed document, as shown in the sources list."""
+
+    doc_id: str
+    source: str
+    source_type: SourceType
+    chunks: int
+
+
 class JobResponse(BaseModel):
     """An ingestion job's state. Returned on submission and when polling."""
 

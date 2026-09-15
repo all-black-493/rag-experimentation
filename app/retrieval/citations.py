@@ -62,8 +62,10 @@ def build_citations(documents: list[Document]) -> list[Citation]:
             source_type=doc.metadata.get("source_type", "text"),
             page=doc.metadata.get("page"),
             text=context_text(doc),
-            # str(...): Weaviate's autoschema infers doc_id as its native `uuid`
-            # type from the value's shape and returns a uuid.UUID, not a str.
+            # str(...) because Weaviate's autoschema types a property from the
+            # shape of the first value it sees, and some of those types don't
+            # come back as str. doc_id is kept out of UUID shape on purpose (see
+            # app.ingestion.dedupe) so the id here is the id it was stored under.
             doc_id=str(doc.metadata["doc_id"]) if doc.metadata.get("doc_id") else None,
             bbox=doc.metadata.get("bbox"),
             page_width=doc.metadata.get("page_width"),

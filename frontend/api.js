@@ -55,7 +55,8 @@ async function request(path, options = {}) {
   if (!response.ok) {
     throw new Error(await extractError(response));
   }
-  return response.json();
+  // A 204 has no body to parse - deletes answer that way.
+  return response.status === 204 ? null : response.json();
 }
 
 // Ingestion returns a job immediately and indexes in the background, so the
@@ -96,6 +97,14 @@ const api = {
         body: JSON.stringify({ url }),
       }),
     );
+  },
+
+  listSources() {
+    return request("/sources");
+  },
+
+  deleteSource(docId) {
+    return request(`/sources/${docId}`, { method: "DELETE" });
   },
 
   query(question) {
