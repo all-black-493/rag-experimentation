@@ -25,6 +25,13 @@ from sentence_transformers import CrossEncoder, SentenceTransformer; \
 CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); \
 SentenceTransformer('BAAI/bge-small-en-v1.5')"
 
+# From here on the weights are local, so stop asking the Hub whether they've
+# changed. Without this every boot makes an unauthenticated (rate-limited)
+# request to HuggingFace before loading a model it already has - a network
+# dependency at startup for no benefit.
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+
 COPY app ./app
 COPY frontend ./frontend
 COPY prompts ./prompts
