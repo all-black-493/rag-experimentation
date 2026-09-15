@@ -8,3 +8,7 @@ __pycache__/
 .playwright-mcp/
 eval/report.json
 /data/
+
+# Cloudflare Pages local state and secrets
+.wrangler/
+.dev.vars

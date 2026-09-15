@@ -32,4 +32,5 @@ RUN uv sync --frozen --no-dev
 
 EXPOSE 8000
 
-CMD ["fastapi", "run", "app/main.py", "--port", "8000", "--host", "0.0.0.0"]
+# Shell form so $PORT expands: hosted platforms assign the port at runtime.
+CMD fastapi run app/main.py --host 0.0.0.0 --port ${PORT:-8000}

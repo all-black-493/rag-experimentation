@@ -295,6 +295,7 @@ app/
   prompts.py              Loads prompts/*.yaml into versioned templates
   dependencies.py         FastAPI deps: settings, vector store, graph, tenant
   rate_limit.py           slowapi limiter, keyed by session id
+  proxy_auth.py           Refuses requests without the proxy's shared secret (prod only)
   storage.py              Uploaded PDFs + page thumbnails, scoped by tenant
   favicons.py             Domain-keyed favicon cache
   thumbnails.py           og:image extraction + cache
@@ -308,7 +309,38 @@ app/
   vectorstore/            client, store, embeddings
 eval/                     Offline faithfulness harness, isolated uv project
 .github/workflows/        eval.yml — runs the eval on every PR
+render.yaml               Backend on Render: app (web) + Weaviate (private), both with disks
+wrangler.toml, functions/ Frontend on Cloudflare Pages; the Function proxies API paths
 ```
+
+## Deploy
+
+Frontend on Cloudflare Pages, backend on Render. Same-origin from the browser's point
+of view: a Pages Function proxies the API paths listed in `frontend/_routes.json` to
+Render and attaches `X-Proxy-Secret`; every other path is a static file. The backend
+refuses anything without the secret (`app/proxy_auth.py`), so its public `onrender.com`
+hostname is not a way around whatever sits in front of the Pages site.
+
+**Render** — Dashboard → New → Blueprint → this repo. `render.yaml` provisions `rag-app`
+(2GB; it idles at ~925MB with both models loaded) and `rag-weaviate` (512MB) with
+persistent disks, generates `PROXY_SECRET`, and prompts for `ANTHROPIC_API_KEY` and the
+Langfuse keys. Copy the generated `PROXY_SECRET` and the app's URL for the next step.
+
+**Cloudflare Pages** — Workers & Pages → Create → Pages → connect the repo. No build
+command; output directory `frontend`. Set two variables on the project: `BACKEND_URL`
+(the Render URL) and `PROXY_SECRET` (encrypted). Locally, `wrangler pages dev` reads the
+same two from a `.dev.vars` file (gitignored).
+
+**Access control** — the app has no login; tenancy is a client-supplied header. Put
+Cloudflare Access (Zero Trust → Applications, free for up to 50 users) in front of the
+Pages hostname before sharing the URL. Without it, anyone who finds the site can upload
+files and run queries on your Anthropic key. Note that Access gates *who gets in*, not
+who sees which session: two admitted users who exchange session ids see each other's
+documents, exactly as on the LAN.
+
+Verified end to end with `wrangler pages dev` against the gated backend: uploads
+(multipart, streamed), PDF.js range requests (206 through the proxy), thumbnails,
+queries and deletes.
 
 ## Faithfulness evaluation
 

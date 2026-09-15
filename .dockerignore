@@ -9,3 +9,7 @@ tests/
 *.egg-info/
 .claude/
 skills/
+functions/
+wrangler.toml
+render.yaml
+.wrangler/
