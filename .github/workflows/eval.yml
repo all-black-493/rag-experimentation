@@ -8,8 +8,8 @@ on:
 jobs:
   eval:
     runs-on: ubuntu-latest
-    # 49 questions, each a full RAG turn plus a ragas judge call, against
-    # rate-limited providers. 30 minutes wasn't enough.
+    # Ingesting the corpus slice on a 2-core runner plus 36 full RAG turns and
+    # a ragas judge call each, against rate-limited providers.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -19,19 +19,23 @@ jobs:
 
       - name: Write app env file
         run: |
-          cat > .env <<EOF
+          cat > backend/.env <<EOF
           # Embeddings and reranking run locally; this is only needed if a run
           # sets EMBEDDING_PROVIDER/RERANKER_PROVIDER back to cohere.
           COHERE_API_KEY=${{ secrets.COHERE_API_KEY }}
           ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
           EOF
 
+      - name: Unit tests
+        working-directory: backend
+        run: uv sync --frozen && uv run ruff check app tests eval && uv run pytest -q
+
       - name: Start app stack
         run: docker compose up -d --build
 
       - name: Wait for API health
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             if curl -sf http://localhost:8010/health; then exit 0; fi
             sleep 2
           done
@@ -39,12 +43,30 @@ jobs:
           docker compose logs
           exit 1
 
+      - name: Ingest the corpus slice
+        # The golden documents plus distractors, in the corpus's own format.
+        # The catalog is inspected at startup, so the app restarts afterwards
+        # to see what was just indexed.
+        run: |
+          docker compose cp backend/eval/fixtures/corpus_slice.json app:/tmp/corpus_slice.json
+          docker compose exec -T app python -m app.corpus.ingest /tmp/corpus_slice.json
+          docker compose restart app
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8010/health; then break; fi
+            sleep 2
+          done
+          curl -sf http://localhost:8010/catalog
+
       - name: Install eval dependencies
-        working-directory: eval
+        working-directory: backend/eval
         run: uv sync
 
+      - name: Retrieval benchmark
+        working-directory: backend/eval
+        run: uv run python retrieval_benchmark.py --label planner
+
       - name: Run faithfulness evaluation
-        working-directory: eval
+        working-directory: backend/eval
         # Unbuffered: stdout is a pipe here, so without this the progress lines
         # sit in the buffer and are lost entirely if the job is cancelled.
         env:
@@ -62,7 +84,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: eval-report
-          path: eval/report.json
+          path: backend/eval/report.json
 
       - name: Tear down stack
         if: always()

@@ -1,0 +1,181 @@
+@import "tailwindcss";
+
+/*
+  Wakili's visual world: paper, ink, one red.
+
+  The materials are the practitioner's own - the bound Laws of Kenya, the law
+  report page, the bundle of authorities with its numbered tabs. Light because
+  the use scene is daylight at a desk or a phone in a court corridor. IBM Plex
+  in three cuts does the work one family should: Serif for anything read as
+  law, Sans for anything operated, Mono for identifiers - neutral citations,
+  dates, version stamps - which are data, not prose.
+*/
+@theme {
+  --color-paper: #f6f2ea;
+  --color-paper-2: #ede7db;
+  --color-sheet: #fdfbf6;
+  --color-ink: #1b1916;
+  --color-ink-2: #4d4740;
+  --color-ink-3: #6c655c;
+  --color-rule: #d8d0c1;
+  --color-rule-2: #c6bcaa;
+  --color-red: #7a1f1f;
+  --color-red-2: #5c1717;
+  --color-red-tint: #f2e3df;
+  --color-marker: #f1e0a5;
+  --color-ok: #2f5d3a;
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-plex-serif), "Iowan Old Style", Georgia, serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-read: 1.0625rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+
+  --radius-control: 6px;
+  --radius-panel: 10px;
+
+  --shadow-sheet: 0 -8px 28px -14px rgb(27 25 22 / 0.28);
+  --shadow-drawer: -12px 0 32px -18px rgb(27 25 22 / 0.28);
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    background: var(--color-paper);
+  }
+
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: 1.5;
+    font-feature-settings: "kern", "liga";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The parts nobody draws still carry the world. */
+  ::selection {
+    background: var(--color-marker);
+    color: var(--color-ink);
+  }
+  * {
+    caret-color: var(--color-red);
+    scrollbar-color: var(--color-rule-2) transparent;
+    scrollbar-width: thin;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-red);
+    outline-offset: 2px;
+  }
+  a {
+    text-underline-offset: 0.18em;
+    text-decoration-thickness: 1px;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* Reading surface: anything that is law, not interface. */
+  .prose-law {
+    font-family: var(--font-serif);
+    font-size: var(--text-read);
+    line-height: 1.6;
+    max-width: 68ch;
+    color: var(--color-ink);
+  }
+  .prose-law p + p {
+    margin-top: 0.85em;
+  }
+
+  /*
+    The one authored moment: a highlighter drawn across the matched passage
+    when its authority is opened. Background-size from 0 to 100%, left to
+    right, with an exponential ease-out.
+  */
+  .marker {
+    background-image: linear-gradient(var(--color-marker), var(--color-marker));
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding: 0.05em 0;
+  }
+  .marker--sweep {
+    animation: marker-sweep 520ms var(--ease-out-expo) both;
+  }
+  @keyframes marker-sweep {
+    from {
+      background-size: 0% 100%;
+    }
+    to {
+      background-size: 100% 100%;
+    }
+  }
+
+  .sheet-enter {
+    animation: sheet-rise 320ms var(--ease-out-expo) both;
+  }
+  @keyframes sheet-rise {
+    from {
+      transform: translateY(24px);
+      opacity: 0.6;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  .drawer-enter {
+    animation: drawer-slide 280ms var(--ease-out-expo) both;
+  }
+  @keyframes drawer-slide {
+    from {
+      transform: translateX(24px);
+      opacity: 0.6;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--color-paper-2) 0%,
+      var(--color-sheet) 50%,
+      var(--color-paper-2) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+    border-radius: 3px;
+  }
+  @keyframes shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marker--sweep,
+  .sheet-enter,
+  .drawer-enter,
+  .skeleton {
+    animation: none;
+  }
+}
