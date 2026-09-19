@@ -107,6 +107,9 @@ written in a recognisable form anyway.
 
 ### Measured
 
+Every number ever produced, with what changed between one and the next, is in
+`MEASUREMENTS.md`. The current ones:
+
 `backend/eval/retrieval_benchmark.py` scores document-level recall of what search mode
 returns against the 36-question golden set, over the full corpus (84,429 chunks):
 
