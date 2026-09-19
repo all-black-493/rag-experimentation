@@ -38,6 +38,7 @@ services:
       PLANNER_ENABLED: ${PLANNER_ENABLED:-true}
       GRAPH_EXPANSION_ENABLED: ${GRAPH_EXPANSION_ENABLED:-true}
       RERANK_WITH_TITLE: ${RERANK_WITH_TITLE:-true}
+      TOPICS_ENABLED: ${TOPICS_ENABLED:-false}
       # Local models: LLM_PROVIDER=ollama docker compose --profile ollama up -d
       # then `docker compose exec ollama ollama pull qwen3:8b`. A host install
       # instead of the service: OLLAMA_BASE_URL=http://host.docker.internal:11434.

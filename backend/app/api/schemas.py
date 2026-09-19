@@ -170,8 +170,9 @@ class QueryResponse(BaseModel):
     question: str
     plan: Plan | None = None
     retrieval: list[SubQueryOutcome] = []
-    # What the citation graph added, if anything.
+    # What the citation graph and the topic tree added, if anything.
     expansion: dict | None = None
+    topics: dict | None = None
     # Research mode: one entry per review that asked for another pass.
     reviews: list[ReviewOutcome] = []
     citations: list[Citation]
@@ -187,6 +188,7 @@ class QueryResponse(BaseModel):
             plan=outcome.plan.model_dump() if outcome.plan else None,
             retrieval=outcome.retrieval,
             expansion=outcome.expansion,
+            topics=outcome.topics,
             reviews=outcome.reviews,
             citations=outcome.citations,
             answer=outcome.answer,

@@ -34,6 +34,7 @@ class QueryOutcome:
     plan: QueryPlan | None = None
     retrieval: list[SubQueryResult] = field(default_factory=list)
     expansion: dict | None = None
+    topics: dict | None = None
     reviews: list[dict] = field(default_factory=list)
     citations: list[Citation] = field(default_factory=list)
     # Ask and research only.
@@ -79,6 +80,7 @@ def _finalize(state: GraphState, mode: Mode, question: str, root) -> QueryOutcom
         plan=state.get("plan"),
         retrieval=state.get("retrieval", []),
         expansion=state.get("expansion"),
+        topics=state.get("topics"),
         reviews=state.get("reviews", []),
         citations=build_citations(documents),
     )

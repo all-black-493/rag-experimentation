@@ -24,6 +24,7 @@ from app.retrieval.graph import build_graph
 from app.retrieval.pairwise import PairwiseReranker
 from app.retrieval.reranker import build_reranker, warm_reranker
 from app.tracing import configure_tracing, shutdown_tracing
+from app.tree.store import ensure_summary_collection
 from app.vectorstore.client import weaviate_client
 from app.vectorstore.embeddings import build_embeddings, warm_embeddings
 from app.vectorstore.schema import ensure_collections
@@ -71,6 +72,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # The citation graph is derived data built by `python -m app.graph.build`;
         # loaded into memory here so a lookup during a request costs nothing.
         ensure_citation_collection(client)
+        ensure_summary_collection(client)
         citation_graph = load_graph(client)
         app.state.citation_graph = citation_graph
         # Matters: the store on disk, the job runner, and the one function an

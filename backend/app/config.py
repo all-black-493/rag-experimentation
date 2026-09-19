@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     # not grow the pool past this: its passages displace the weakest hybrid
     # candidates instead, and the request path's cost stays flat.
     graph_candidate_budget: int = 40
+    # Topic-tree expansion (RAPTOR): summary nodes consulted per query, leaf
+    # passages taken per node. Off until a tree has been built.
+    topics_enabled: bool = False
+    topics_max_nodes: int = 3
+    topics_max_leaves: int = 6
     # How BM25 and vector rankings are combined. "relative" (Weaviate's default
     # relativeScoreFusion) normalises and blends the scores; "ranked" is
     # reciprocal rank fusion, which uses ranks only and ignores magnitude.

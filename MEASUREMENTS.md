@@ -325,3 +325,30 @@ roles), facts anchored to the right page (the golden matter set's 20 answers dou
 facts), the chronology's dates (11 dated events across the three documents), and whether the
 one genuine contradiction — the letter's "no rent received for May–August" against the
 statement's "KSh 513,600 held in escrow since 5 August" — is found and cited to both sides.
+
+
+---
+
+## 2026-09-20 · Step 6, eval growth — the sets
+
+| set | questions | ground truth | scored on |
+|---|---|---|---|
+| `golden_dataset.jsonl` | 36 | one document | recall@5, MRR, nDCG |
+| `golden_relationships.jsonl` | 10 | 30–43 documents each, from the citation graph | + P@5 |
+| `golden_matter.jsonl` | 20 | one document and a page | + page@5 |
+| `golden_authorities.jsonl` | 3 documents | the citations each makes, and whether the corpus holds them | found / resolved / anchored |
+| `golden_topics.jsonl` | 8 | 7–23 judgments each, every one containing the theme's phrases | recall@5, MRR, P@5 |
+
+77 questions in all. The topic set's baseline, planner off, citation-graph expansion on, no
+topic tree yet:
+
+| `--set topics` | recall@5 | MRR | nDCG@5 | P@5 |
+|---|---|---|---|---|
+| hybrid + graph expansion (no tree) | 87.5% | 0.875 | 0.875 | 70.0% |
+
+Four themes were dropped by their own rule — fewer than five judgments contain the phrases
+(defilement + age assessment: 4; distress for rent: 4; dying declaration: 1; trial within a
+trial + confession: 1). The bar is deliberate: a set of four is a lookup, not a theme.
+
+`run_eval.py` now records p50/p95 wall clock per `/query` and the provider and models that
+answered (from `/health`), in the report and on the console.

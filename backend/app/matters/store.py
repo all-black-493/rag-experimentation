@@ -88,6 +88,14 @@ class MatterStore:
             self._write(matter)
             return updated
 
+    def set_topics(self, matter_id: str, count: int, error: str | None = None) -> Matter:
+        with self._lock:
+            matter = self._require(matter_id)
+            matter.topics = count
+            matter.topics_error = error
+            self._write(matter)
+            return matter
+
     def set_analysis(self, matter_id: str, analysis: CaseAnalysis | None) -> Matter:
         with self._lock:
             matter = self._require(matter_id)

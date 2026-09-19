@@ -1,6 +1,6 @@
 """The retrieval graph, wired.
 
-    plan → retrieve → expand → rerank → [search]   END
+    plan → retrieve → expand → topics → rerank → [search]   END
                                       → [ask]      generate → verify → END / decline
                                       → [research] review → (follow-ups) retrieve …
                                                           → generate → verify → END / decline
@@ -36,6 +36,7 @@ from app.retrieval.reranker import Reranker
 from app.retrieval.retrieve import retrieve
 from app.retrieval.review import review
 from app.retrieval.state import GraphState
+from app.retrieval.topics import topics
 
 # Weaviate's two fusion strategies for combining BM25 and vector rankings.
 # RANKED is reciprocal rank fusion; RELATIVE_SCORE normalises and blends the
@@ -124,6 +125,20 @@ def build_graph(
         ),
     )
     graph.add_node(
+        "topics",
+        partial(
+            topics,
+            client=client,
+            embeddings=embeddings,
+            alpha=settings.hybrid_alpha,
+            fusion=HYBRID_FUSIONS[settings.hybrid_fusion],
+            max_nodes=settings.topics_max_nodes,
+            max_leaves=settings.topics_max_leaves,
+            budget=settings.graph_candidate_budget,
+            enabled=settings.topics_enabled,
+        ),
+    )
+    graph.add_node(
         "rerank",
         partial(
             rerank,
@@ -157,7 +172,8 @@ def build_graph(
     graph.add_edge(START, "plan")
     graph.add_edge("plan", "retrieve")
     graph.add_edge("retrieve", "expand")
-    graph.add_edge("expand", "rerank")
+    graph.add_edge("expand", "topics")
+    graph.add_edge("topics", "rerank")
     graph.add_conditional_edges(
         "rerank",
         route_after_rerank,
