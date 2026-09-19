@@ -109,7 +109,7 @@ class FailingLLM:
 def test_plan_node_degrades_to_the_fallback_when_the_planner_fails():
     state = {"question": "q", "mode": "ask", "user_filters": LegalFilters(collections=("case_law",))}
 
-    result = plan(state, FailingLLM(), catalog(), max_subqueries=4)
+    result = plan(state, FailingLLM(), catalog, max_subqueries=4)
 
     assert result["plan"].origin == "fallback"
     assert [s.collection for s in result["plan"].sub_queries] == ["case_law"]
@@ -132,7 +132,57 @@ def test_plan_node_returns_the_constrained_plan():
     )
     state = {"question": "q", "mode": "ask", "user_filters": LegalFilters()}
 
-    result = plan(state, StructuredLLM(produced), catalog(), max_subqueries=4)
+    result = plan(state, StructuredLLM(produced), catalog, max_subqueries=4)
 
     assert result["plan"].origin == "planner"
     assert result["plan"].sub_queries[0].courts == []
+
+
+class CountingLLM(StructuredLLM):
+    def __init__(self, produced):
+        super().__init__(produced)
+        self.calls = 0
+
+    def invoke(self, _message, config=None):
+        self.calls += 1
+        return self._produced
+
+
+def test_a_repeated_question_is_planned_once():
+    from app.caching import TTLCache
+
+    produced = QueryPlan(sub_queries=[SubQuery(query="q", collection="case_law")], rationale="r")
+    llm = CountingLLM(produced)
+    cache = TTLCache(ttl_seconds=60)
+    state = {"question": "q", "mode": "ask", "user_filters": LegalFilters()}
+
+    first = plan(state, llm, catalog, max_subqueries=4, cache=cache)["plan"]
+    second = plan(state, llm, catalog, max_subqueries=4, cache=cache)["plan"]
+
+    assert llm.calls == 1
+    assert first == second
+
+
+def test_different_user_filters_do_not_share_a_cached_plan():
+    from app.caching import TTLCache
+
+    produced = QueryPlan(sub_queries=[SubQuery(query="q", collection="case_law")], rationale="r")
+    llm = CountingLLM(produced)
+    cache = TTLCache(ttl_seconds=60)
+
+    plan({"question": "q", "mode": "ask", "user_filters": LegalFilters()}, llm, catalog, 4, cache=cache)
+    plan({"question": "q", "mode": "ask", "user_filters": LegalFilters(courts=("kesc",))}, llm, catalog, 4, cache=cache)
+
+    assert llm.calls == 2
+
+
+def test_a_fallback_plan_is_not_cached():
+    from app.caching import TTLCache
+
+    cache = TTLCache(ttl_seconds=60)
+    state = {"question": "q", "mode": "ask", "user_filters": LegalFilters()}
+
+    plan(state, FailingLLM(), catalog, max_subqueries=4, cache=cache)
+    result = plan(state, StructuredLLM(QueryPlan(sub_queries=[SubQuery(query="q", collection="case_law")], rationale="r")), catalog, max_subqueries=4, cache=cache)
+
+    assert result["plan"].origin == "planner"

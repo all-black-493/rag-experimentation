@@ -1,12 +1,20 @@
 """What the corpus contains, described once for the planner, the API and the UI.
 
 The reference architecture's agent starts by inspecting the schema and
-collections before deciding where to search. This is that inspection, done at
-startup and cached: which collections exist, what each is for, how many
-documents they hold, which courts and years are present. Built from the live
-database rather than written by hand, so the planner is never told about a
-court the corpus doesn't have, and the UI's filter rail never offers one.
+collections before deciding where to search. This is that inspection: which
+collections exist, what each is for, how many documents they hold, which courts
+and years are present. Built from the live database rather than written by hand,
+so the planner is never told about a court the corpus doesn't have, and the UI's
+filter rail never offers one.
+
+Held by a `CatalogHolder` that rebuilds it after a TTL, so an ingest that ran in
+another process shows up without a restart. The rebuild is a handful of
+aggregate queries - cheap enough to do every few minutes, too slow for every
+request.
 """
+
+import threading
+import time
 
 from pydantic import BaseModel
 from weaviate.classes.aggregate import GroupByAggregate, Metrics
@@ -133,3 +141,31 @@ def build_catalog(client: WeaviateClient) -> Catalog:
             )
         )
     return Catalog(collections=infos)
+
+
+class CatalogHolder:
+    """The current catalog, rebuilt from the database once it's older than `ttl`."""
+
+    def __init__(self, client: WeaviateClient, ttl_seconds: float):
+        self._client = client
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+        self._catalog: Catalog | None = None
+        self._built_at = 0.0
+
+    def current(self) -> Catalog:
+        # Double-checked under the lock so concurrent requests at expiry don't
+        # all rebuild, but the common path never blocks on it.
+        if self._catalog is not None and time.monotonic() - self._built_at < self._ttl:
+            return self._catalog
+        with self._lock:
+            if self._catalog is None or time.monotonic() - self._built_at >= self._ttl:
+                self._catalog = build_catalog(self._client)
+                self._built_at = time.monotonic()
+            return self._catalog
+
+    def refresh(self) -> Catalog:
+        with self._lock:
+            self._catalog = build_catalog(self._client)
+            self._built_at = time.monotonic()
+            return self._catalog

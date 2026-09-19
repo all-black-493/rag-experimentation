@@ -30,6 +30,10 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     generation_model: str = "claude-sonnet-5"
+    # Planning is routing and decomposition, not reasoning: a small fast model
+    # does it in a fraction of the time. Measured: the planner was 7s of a 23s
+    # request on the generation model.
+    planner_model: str = "claude-haiku-4-5-20251001"
 
     # When set, every request except /health must carry it in X-Proxy-Secret.
     # Set in deployments where the API sits behind a trusted proxy (see
@@ -112,11 +116,14 @@ class Settings(BaseSettings):
     circuit_breaker_failures: int = 5
     circuit_breaker_reset_seconds: float = 30.0
 
-    # Caches. Embeddings are content-addressed on disk; retrieval is short-lived;
-    # the LLM cache is process-local.
+    # Caches. Embeddings are content-addressed on disk; retrieval and plans are
+    # short-lived; the LLM cache is process-local.
     embedding_cache_enabled: bool = True
     retrieval_cache_ttl_seconds: float = 300.0
     llm_cache_enabled: bool = True
+    # How often the catalog is rebuilt from the database, so an ingest in another
+    # process shows up without a restart.
+    catalog_refresh_seconds: float = 600.0
 
     # Langfuse tracing. Absent keys disable tracing entirely rather than erroring,
     # so local runs and CI never need a Langfuse project.

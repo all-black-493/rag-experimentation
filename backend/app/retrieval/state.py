@@ -30,4 +30,5 @@ class GraphState(TypedDict):
     retrieval: NotRequired[list[SubQueryResult]]
     documents: list[Document]
     answer: str
-    grounded: bool
+    # None until the verifier has judged the answer.
+    grounded: bool | None

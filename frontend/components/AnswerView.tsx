@@ -24,8 +24,12 @@ interface Props {
  * grounded, or removed a marker that pointed nowhere.
  */
 export function AnswerView({ phase, draft, result, citations, activeIndex, onOpen, registerChip }: Props) {
-  const declined = phase === "done" && result !== null && result.citations.length === 0;
-  const text = phase === "done" && result?.answer ? result.answer : draft;
+  // A result with no citations is a decline - for lack of passages, or because
+  // the verdict withdrew the answer.
+  const declined = result !== null && result.citations.length === 0 && phase === "done";
+  // Once `done` lands the answer is final, whatever the verifier says later.
+  const text = result?.answer ?? draft;
+  const streaming = phase === "answering";
 
   if (phase === "planning" || (phase === "searching" && !draft)) {
     return <AnswerSkeleton />;
@@ -61,7 +65,7 @@ export function AnswerView({ phase, draft, result, citations, activeIndex, onOpe
 
   return (
     <div>
-      <div className="prose-law" aria-busy={phase !== "done"}>
+      <div className="prose-law" aria-busy={streaming}>
         {blocks(text).map((block, i) =>
           block.kind === "paragraph" ? (
             <p key={i}>{block.inlines.map(renderInline)}</p>
@@ -79,7 +83,7 @@ export function AnswerView({ phase, draft, result, citations, activeIndex, onOpe
             </ul>
           ),
         )}
-        {phase !== "done" && (
+        {streaming && (
           <span className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[0.2em] bg-red motion-safe:animate-pulse" aria-hidden="true" />
         )}
       </div>

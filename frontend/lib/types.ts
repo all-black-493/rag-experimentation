@@ -85,10 +85,19 @@ export interface Catalog {
   collections: CollectionInfo[];
 }
 
+export interface Verdict {
+  grounded: boolean;
+  withdrawn: boolean;
+  // What replaces the answer when it's withdrawn.
+  answer: string | null;
+}
+
 // Server-sent events from POST /query/stream, in the order they arrive.
+// `done` carries the final answer; in ask mode `verdict` follows it.
 export type StreamEvent =
   | { event: "plan"; data: { plan: Plan | null } }
   | { event: "sources"; data: { citations: Citation[] } }
   | { event: "token"; data: { text: string } }
   | { event: "done"; data: QueryResponse }
+  | { event: "verdict"; data: Verdict }
   | { event: "error"; data: { detail: string } };

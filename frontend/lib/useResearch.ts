@@ -10,8 +10,8 @@ import type { Citation, Mode, Plan, QueryFilters, QueryResponse, SubQueryOutcome
  * planning   the question is with the planner
  * searching  the plan is known, passages are being retrieved and reranked
  * answering  tokens are arriving
- * verifying  tokens stopped, the groundedness check hasn't returned
- * done       the authoritative result is in
+ * verifying  the answer is final; the groundedness check hasn't returned
+ * done       the verdict is in (or search results are)
  */
 export type Phase = "idle" | "planning" | "searching" | "answering" | "verifying" | "done";
 
@@ -25,6 +25,8 @@ export interface ResearchState {
   // The streamed preview; replaced by the final answer on `done`.
   draft: string;
   result: QueryResponse | null;
+  // Ask mode, after `verdict`: true if the answer was withdrawn as ungrounded.
+  withdrawn: boolean;
   error: string | null;
 }
 
@@ -37,22 +39,18 @@ const INITIAL: ResearchState = {
   citations: [],
   draft: "",
   result: null,
+  withdrawn: false,
   error: null,
 };
 
-// Tokens that stop arriving for this long, before `done`, mean the model has
-// finished and the verifier is running.
-const VERIFYING_AFTER_MS = 700;
 
 export function useResearch() {
   const [state, setState] = useState<ResearchState>(INITIAL);
   const controller = useRef<AbortController | null>(null);
-  const lull = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancel = useCallback(() => {
     controller.current?.abort();
     controller.current = null;
-    if (lull.current) clearTimeout(lull.current);
   }, []);
 
   useEffect(() => cancel, [cancel]);
@@ -63,13 +61,6 @@ export function useResearch() {
       const current = new AbortController();
       controller.current = current;
       setState({ ...INITIAL, phase: "planning", question, mode });
-
-      const armLull = () => {
-        if (lull.current) clearTimeout(lull.current);
-        lull.current = setTimeout(() => {
-          setState((s) => (s.phase === "answering" ? { ...s, phase: "verifying" } : s));
-        }, VERIFYING_AFTER_MS);
-      };
 
       try {
         for await (const event of streamQuery({ question, mode, filters }, current.signal)) {
@@ -87,18 +78,34 @@ export function useResearch() {
               break;
             case "token":
               setState((s) => ({ ...s, phase: "answering", draft: s.draft + event.data.text }));
-              armLull();
               break;
             case "done":
-              if (lull.current) clearTimeout(lull.current);
+              // The answer is final. In ask mode the verifier is still running;
+              // the reader can start now rather than wait for its verdict.
               setState((s) => ({
                 ...s,
-                phase: "done",
+                phase: mode === "ask" && event.data.citations.length ? "verifying" : "done",
                 result: event.data,
                 plan: event.data.plan,
                 retrieval: event.data.retrieval,
                 citations: event.data.citations,
                 draft: event.data.answer ?? s.draft,
+              }));
+              break;
+            case "verdict":
+              setState((s) => ({
+                ...s,
+                phase: "done",
+                withdrawn: event.data.withdrawn,
+                result: s.result
+                  ? {
+                      ...s.result,
+                      grounded: event.data.grounded,
+                      answer: event.data.withdrawn ? event.data.answer : s.result.answer,
+                      citations: event.data.withdrawn ? [] : s.result.citations,
+                    }
+                  : s.result,
+                citations: event.data.withdrawn ? [] : s.citations,
               }));
               break;
             case "error":

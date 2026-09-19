@@ -22,7 +22,7 @@ from app.caching import TTLCache
 from app.config import Settings
 from app.resilience import CircuitBreaker
 from app.retrieval.answer import decline, generate, verify
-from app.retrieval.catalog import Catalog
+from app.retrieval.catalog import CatalogHolder
 from app.retrieval.pairwise import PairwiseReranker
 from app.retrieval.planner import plan
 from app.retrieval.rerank import rerank
@@ -55,11 +55,13 @@ def build_graph(
     embeddings: Embeddings,
     reranker: Reranker,
     llm: BaseChatModel,
-    catalog: Catalog,
+    catalog: CatalogHolder,
     settings: Settings,
+    planner: BaseChatModel | None = None,
     verifier: BaseChatModel | None = None,
     rerank_breaker: CircuitBreaker | None = None,
     retrieval_cache: TTLCache | None = None,
+    plan_cache: TTLCache | None = None,
     pairwise: PairwiseReranker | None = None,
 ) -> CompiledStateGraph:
     graph = StateGraph(GraphState)
@@ -67,10 +69,12 @@ def build_graph(
         "plan",
         partial(
             plan,
-            llm=llm,
-            catalog=catalog,
+            # A small fast model: planning is routing, not reasoning.
+            llm=planner or llm,
+            catalog=catalog.current,
             max_subqueries=settings.planner_max_subqueries,
             enabled=settings.planner_enabled,
+            cache=plan_cache,
         ),
     )
     graph.add_node(
