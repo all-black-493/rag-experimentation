@@ -35,7 +35,9 @@ from app.scoring import citation_coverage
 
 HEALTH_TIMEOUT_SECONDS = 60
 CONCURRENCY = 5
-JUDGE_MAX_TOKENS = 4096
+# Legal answers decompose into many claims; at 4096 the judge overran on 5 of 36
+# and scored a correct verbatim answer 0.00.
+JUDGE_MAX_TOKENS = 16384
 
 
 @dataclass
