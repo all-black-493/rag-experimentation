@@ -18,6 +18,7 @@ def to_response(outcome: QueryOutcome) -> QueryResponse:
         question=outcome.question,
         plan=outcome.plan.model_dump() if outcome.plan else None,
         retrieval=outcome.retrieval,
+        expansion=outcome.expansion,
         citations=outcome.citations,
         answer=outcome.answer,
         grounded=outcome.grounded,

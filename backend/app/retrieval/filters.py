@@ -35,6 +35,24 @@ class LegalFilters:
     def allows(self, collection: Collection) -> bool:
         return not self.collections or collection in self.collections
 
+    def admits(self, metadata: dict) -> bool:
+        """Whether one already-fetched passage falls within these restrictions.
+
+        The graph hands retrieval specific passages by address; they never went
+        through a filtered query, so the user's restrictions are checked here.
+        """
+        collection = metadata.get("collection")
+        if not self.allows(collection):
+            return False
+        if collection == "case_law" and self.courts and metadata.get("court_code") not in self.courts:
+            return False
+        year = metadata.get("year")
+        if (self.year_from is not None or self.year_to is not None) and year is None:
+            return False
+        return (self.year_from is None or year >= self.year_from) and (
+            self.year_to is None or year <= self.year_to
+        )
+
     def narrows_beyond(self, other: "LegalFilters") -> bool:
         """Whether this restricts courts or years more than `other` does.
 

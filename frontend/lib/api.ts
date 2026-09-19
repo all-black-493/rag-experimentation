@@ -1,5 +1,5 @@
 import { readEvents } from "./stream";
-import type { Catalog, QueryRequest, StreamEvent } from "./types";
+import type { Catalog, GraphNeighbourhood, QueryRequest, StreamEvent } from "./types";
 
 async function failure(response: Response): Promise<Error> {
   try {
@@ -12,6 +12,14 @@ async function failure(response: Response): Promise<Error> {
 
 export async function fetchCatalog(): Promise<Catalog> {
   const response = await fetch("/api/catalog");
+  if (!response.ok) throw await failure(response);
+  return response.json();
+}
+
+/** What a document cites and what cites it; null when nothing is recorded. */
+export async function fetchNeighbourhood(docId: string): Promise<GraphNeighbourhood | null> {
+  const response = await fetch(`/api/graph/${encodeURIComponent(docId)}`);
+  if (response.status === 404) return null;
   if (!response.ok) throw await failure(response);
   return response.json();
 }

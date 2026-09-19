@@ -33,6 +33,7 @@ class QueryOutcome:
     question: str
     plan: QueryPlan | None = None
     retrieval: list[SubQueryResult] = field(default_factory=list)
+    expansion: dict | None = None
     citations: list[Citation] = field(default_factory=list)
     # Ask mode only.
     answer: str | None = None
@@ -76,6 +77,7 @@ def _finalize(state: GraphState, mode: Mode, question: str, root) -> QueryOutcom
         question=question,
         plan=state.get("plan"),
         retrieval=state.get("retrieval", []),
+        expansion=state.get("expansion"),
         citations=build_citations(documents),
     )
     metadata: dict = {
@@ -114,9 +116,7 @@ def _finalize(state: GraphState, mode: Mode, question: str, root) -> QueryOutcom
         root.score_trace(name="citation_coverage", value=report.coverage, data_type="NUMERIC")
         # A marker pointing at a citation that doesn't exist is the model
         # inventing a reference, which coverage alone would score as a hit.
-        root.score_trace(
-            name="invalid_citations", value=float(len(stripped)), data_type="NUMERIC"
-        )
+        root.score_trace(name="invalid_citations", value=float(len(stripped)), data_type="NUMERIC")
     return outcome
 
 

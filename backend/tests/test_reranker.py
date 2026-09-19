@@ -84,3 +84,11 @@ def test_provider_setting_selects_the_implementation():
     with patch("langchain_cohere.CohereRerank") as cohere:
         build_reranker(Settings(reranker_provider="cohere", cohere_api_key="x"))
         cohere.assert_called_once()
+
+
+def test_leaders_are_collapsed_for_scoring_only():
+    from app.retrieval.reranker import for_scoring
+
+    text = "General damages....................Ksh. 120,000/= ______ total ---- ok"
+    assert for_scoring(text) == "General damages...Ksh. 120,000/= ___ total --- ok"
+    assert for_scoring("s. 26 of the Act... and more") == "s. 26 of the Act... and more"

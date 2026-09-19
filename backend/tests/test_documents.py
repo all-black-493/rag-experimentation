@@ -121,3 +121,9 @@ def test_parse_date_accepts_the_corpus_format_and_non_breaking_spaces():
     assert parse_date("May\xa015,\xa02025") == date(2025, 5, 15)
     assert parse_date("not a date") is None
     assert parse_date(None) is None
+
+
+def test_breadcrumb_arrow_is_not_part_of_a_title():
+    act = "https://new.kenyalaw.org/akn/ke/act/2010/constitution"
+    docs = reconstruct([row(act, 0, "x", kind="legislation", title="Constitution of Kenya\xa0\u2192")])
+    assert docs[0].title == "Constitution of Kenya"

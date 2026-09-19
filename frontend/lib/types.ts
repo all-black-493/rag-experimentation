@@ -28,6 +28,7 @@ export interface Plan {
   sub_queries: SubQuery[];
   rationale: string;
   origin: "planner" | "fallback";
+  relationships: boolean;
 }
 
 export interface SubQueryOutcome {
@@ -41,6 +42,7 @@ export interface SubQueryOutcome {
 export interface Citation {
   index: number;
   collection: Collection;
+  doc_id: string;
   title: string;
   url: string;
   court: string | null;
@@ -51,6 +53,14 @@ export interface Citation {
   text: string;
   parent_text: string;
   relevance_score: number | null;
+  // Why the citation graph added this passage: "cites X", "applies section N of Y".
+  via: string | null;
+}
+
+export interface Expansion {
+  lookups: { cited: string; passages: number; added: number }[];
+  neighbours: number;
+  added: number;
 }
 
 export interface QueryResponse {
@@ -58,6 +68,7 @@ export interface QueryResponse {
   question: string;
   plan: Plan | null;
   retrieval: SubQueryOutcome[];
+  expansion: Expansion | null;
   citations: Citation[];
   answer: string | null;
   grounded: boolean | null;
@@ -83,6 +94,25 @@ export interface CollectionInfo {
 
 export interface Catalog {
   collections: CollectionInfo[];
+}
+
+// A document one citation away from an authority, with every way the link was written.
+export interface GraphLink {
+  doc_id: string | null;
+  collection: Collection | null;
+  title: string | null;
+  url: string | null;
+  kind: "cites" | "applies";
+  parties: string | null;
+  refs: string[];
+  via_doc_id: string;
+  via_chunk_index: number;
+}
+
+export interface GraphNeighbourhood {
+  doc_id: string;
+  cites: GraphLink[];
+  cited_by: GraphLink[];
 }
 
 export interface Verdict {

@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, ExternalLink, X } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import { COLLECTION_LABEL, provenance } from "@/lib/format";
 import type { Citation } from "@/lib/types";
+import { Neighbourhood } from "./Neighbourhood";
 
 interface Props {
   citations: Citation[];
@@ -57,8 +58,8 @@ export function SourcePanel({ citations, index, onNavigate, onClose }: Props) {
         "fixed inset-x-0 bottom-0 z-30 h-[85dvh] rounded-t-panel border-t border-rule-2 shadow-sheet sheet-enter",
         // Laptop: a drawer over the right of the page.
         "lg:inset-y-0 lg:left-auto lg:right-0 lg:h-auto lg:w-[420px] lg:rounded-none lg:border-t-0 lg:border-l lg:shadow-drawer lg:drawer-enter",
-        // Wide: its own column beside the page.
-        "xl:static xl:w-auto xl:min-h-0 xl:shadow-none",
+        // Wide: its own column beside the page, staying put while the page scrolls.
+        "xl:sticky xl:top-0 xl:h-dvh xl:w-auto xl:self-start xl:shadow-none",
       ].join(" ")}
     >
       <div className="flex items-center justify-between gap-2 border-b border-rule px-4 py-2.5 lg:px-5">
@@ -110,6 +111,7 @@ export function SourcePanel({ citations, index, onNavigate, onClose }: Props) {
             <span className="text-ink-3"> · passage {citation.chunk_index + 1}</span>
           )}
         </p>
+        {citation.via && <p className="mt-0.5 font-mono text-xs text-ink-2">{citation.via}</p>}
         <a
           href={citation.url}
           target="_blank"
@@ -140,6 +142,8 @@ export function SourcePanel({ citations, index, onNavigate, onClose }: Props) {
             </>
           )}
         </div>
+
+        <Neighbourhood docId={citation.doc_id} />
       </div>
     </aside>
   );

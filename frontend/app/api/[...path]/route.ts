@@ -15,11 +15,17 @@ const PROXY_SECRET = process.env.PROXY_SECRET;
 
 // Everything else is served by this app itself.
 const ALLOWED = ["query", "query/stream", "catalog", "health"];
+// Routes with a document id after the prefix.
+const ALLOWED_PREFIXES = ["graph/"];
+
+function allowed(target: string): boolean {
+  return ALLOWED.includes(target) || ALLOWED_PREFIXES.some((prefix) => target.startsWith(prefix));
+}
 
 async function proxy(request: NextRequest, ctx: RouteContext<"/api/[...path]">) {
   const { path } = await ctx.params;
   const target = path.join("/");
-  if (!ALLOWED.includes(target)) {
+  if (!allowed(target)) {
     return Response.json({ detail: "Not found" }, { status: 404 });
   }
   if (!BACKEND_URL) {

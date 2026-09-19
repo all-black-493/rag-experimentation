@@ -45,11 +45,12 @@ jobs:
 
       - name: Ingest the corpus slice
         # The golden documents plus distractors, in the corpus's own format.
-        # The catalog is inspected at startup, so the app restarts afterwards
-        # to see what was just indexed.
+        # The catalog and the citation graph are loaded at startup, so the app
+        # restarts afterwards to see what was just indexed.
         run: |
           docker compose cp backend/eval/fixtures/corpus_slice.json app:/tmp/corpus_slice.json
           docker compose exec -T app python -m app.corpus.ingest /tmp/corpus_slice.json
+          docker compose exec -T app python -m app.graph.build
           docker compose restart app
           for i in $(seq 1 60); do
             if curl -sf http://localhost:8010/health; then break; fi

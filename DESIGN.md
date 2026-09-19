@@ -50,7 +50,7 @@ A research desk: wordmark header (56px), filter rail (260px), working page
 |---|---|---|
 | < 1024 | sheet from the left, opened from the header's Filters button | sheet rising from the bottom, 85dvh |
 | 1024–1279 | column | drawer over the right of the page, 420px |
-| ≥ 1280 | column | third column, 360–420px |
+| ≥ 1280 | column | third column, 360–420px, sticky: it scrolls on its own while the page scrolls |
 
 The source is never below the answer: on every width the bundle appears over
 or beside the page, never at the end of it.
@@ -69,10 +69,17 @@ or beside the page, never at the end of it.
 - **Citation chip** (`CitationChip`): `[n]` as a small mono tab in red-tint;
   red fill when its authority is open; inert text when it points nowhere.
 - **Authority list** (`AuthorityList`): rows on hairlines, mono index, serif
-  title, mono provenance. Search mode adds a three-line passage preview.
+  title, mono provenance. A passage the citation graph added carries one more
+  mono line saying why (`applies section 8(1) of the Sexual Offences Act`) —
+  a fact, not a label. Search mode adds a three-line passage preview.
 - **Bundle** (`SourcePanel`): "Authority n of N" with prev/next, serif title,
   mono provenance, link out, the parent window with the matched child under
   the marker. Escape closes; arrows navigate; focus returns to the chip.
+- **Neighbourhood** (`Neighbourhood`): under the passage, *Cites* and *Cited
+  by* as lists in the authority list's vocabulary — serif title, mono
+  provisions, a link-out glyph when the document is in the corpus. Folded at
+  20 rows behind a mono count. Nothing renders when the graph has no record;
+  no empty-state copy.
 - **Empty state**: a sentence of purpose and three real questions as rows.
 - **Skeletons** shimmer in paper tones; no spinners in content.
 

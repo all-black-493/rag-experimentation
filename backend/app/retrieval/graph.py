@@ -1,7 +1,7 @@
 """The retrieval graph, wired.
 
-    plan → retrieve → rerank → [search] END
-                             → [ask]    generate → verify → END / decline
+    plan → retrieve → expand → rerank → [search] END
+                                      → [ask]    generate → verify → END / decline
 
 Every node lives in its own module; this file only connects them and binds
 their dependencies. Mode is decided per request and routes after reranking:
@@ -20,9 +20,11 @@ from weaviate.client import WeaviateClient
 
 from app.caching import TTLCache
 from app.config import Settings
+from app.graph.store import Graph
 from app.resilience import CircuitBreaker
 from app.retrieval.answer import decline, generate, verify
 from app.retrieval.catalog import CatalogHolder
+from app.retrieval.expand import expand
 from app.retrieval.pairwise import PairwiseReranker
 from app.retrieval.planner import plan
 from app.retrieval.rerank import rerank
@@ -57,6 +59,7 @@ def build_graph(
     llm: BaseChatModel,
     catalog: CatalogHolder,
     settings: Settings,
+    citation_graph: Graph | None = None,
     planner: BaseChatModel | None = None,
     verifier: BaseChatModel | None = None,
     rerank_breaker: CircuitBreaker | None = None,
@@ -91,6 +94,21 @@ def build_graph(
         ),
     )
     graph.add_node(
+        "expand",
+        partial(
+            expand,
+            client=client,
+            embeddings=embeddings,
+            graph=citation_graph or Graph(),
+            alpha=settings.hybrid_alpha,
+            fusion=HYBRID_FUSIONS[settings.hybrid_fusion],
+            max_lookup_passages=settings.graph_max_lookup_passages,
+            max_neighbours=settings.graph_max_neighbours,
+            budget=settings.graph_candidate_budget,
+            enabled=settings.graph_expansion_enabled,
+        ),
+    )
+    graph.add_node(
         "rerank",
         partial(
             rerank,
@@ -109,7 +127,8 @@ def build_graph(
 
     graph.add_edge(START, "plan")
     graph.add_edge("plan", "retrieve")
-    graph.add_edge("retrieve", "rerank")
+    graph.add_edge("retrieve", "expand")
+    graph.add_edge("expand", "rerank")
     graph.add_conditional_edges(
         "rerank",
         route_after_rerank,

@@ -7,9 +7,10 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIASGIMiddleware
 
-from app.api.routes import catalog, query
+from app.api.routes import catalog, graph, query
 from app.caching import TTLCache, enable_llm_cache
 from app.config import get_settings
+from app.graph.store import ensure_citation_collection, load_graph
 from app.proxy_auth import require_proxy_secret
 from app.rate_limit import limiter
 from app.resilience import CircuitBreaker
@@ -69,6 +70,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         catalog = CatalogHolder(client, settings.catalog_refresh_seconds)
         catalog.current()
         app.state.catalog = catalog
+        # The citation graph is derived data built by `python -m app.graph.build`;
+        # loaded into memory here so a lookup during a request costs nothing.
+        ensure_citation_collection(client)
+        citation_graph = load_graph(client)
+        app.state.citation_graph = citation_graph
         app.state.graph = build_graph(
             client=client,
             embeddings=embeddings,
@@ -76,6 +82,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             llm=llm,
             catalog=catalog,
             settings=settings,
+            citation_graph=citation_graph,
             planner=planner,
             verifier=verifier,
             rerank_breaker=rerank_breaker,
@@ -97,6 +104,7 @@ app.add_middleware(SlowAPIASGIMiddleware)
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.include_router(query.router)
 app.include_router(catalog.router)
+app.include_router(graph.router)
 
 
 @app.get("/health")

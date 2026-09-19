@@ -60,6 +60,12 @@ class SubQuery(BaseModel):
 class QueryPlan(BaseModel):
     sub_queries: list[SubQuery] = Field(min_length=1, max_length=4)
     rationale: str = Field(description="One sentence: why these sub-queries and collections.")
+    relationships: bool = Field(
+        default=False,
+        description="True when the question is about how authorities relate: which cases "
+        "cite, apply, follow or distinguish a case or a statutory provision, or what a "
+        "case relied on.",
+    )
     # How the plan came to be, so a trace can tell a planned query from a
     # fallback. Set by code, not by the model.
     origin: Literal["planner", "fallback"] = "planner"

@@ -45,6 +45,7 @@ class Plan(BaseModel):
     sub_queries: list[SubQuery]
     rationale: str
     origin: Literal["planner", "fallback"]
+    relationships: bool = False
 
 
 class SubQueryOutcome(BaseModel):
@@ -60,6 +61,7 @@ class SubQueryOutcome(BaseModel):
 class Citation(BaseModel):
     index: int
     collection: Collection
+    doc_id: str
     title: str
     url: str
     court: str | None = None
@@ -70,6 +72,30 @@ class Citation(BaseModel):
     text: str
     parent_text: str
     relevance_score: float | None = None
+    via: str | None = None
+
+
+class GraphLink(BaseModel):
+    """A document one citation away, with every way the link was written."""
+
+    # Null when the corpus doesn't hold the cited authority.
+    doc_id: str | None
+    collection: Collection | None
+    title: str | None
+    url: str | None
+    kind: Literal["cites", "applies"]
+    parties: str | None = None
+    # "section 204 of the Penal Code", "[2018] eKLR": as the citing passage wrote it.
+    refs: list[str]
+    # The first passage that made the link.
+    via_doc_id: str
+    via_chunk_index: int
+
+
+class GraphNeighbourhood(BaseModel):
+    doc_id: str
+    cites: list[GraphLink]
+    cited_by: list[GraphLink]
 
 
 class QueryResponse(BaseModel):
@@ -77,6 +103,8 @@ class QueryResponse(BaseModel):
     question: str
     plan: Plan | None = None
     retrieval: list[SubQueryOutcome] = []
+    # What the citation graph added, if anything.
+    expansion: dict | None = None
     citations: list[Citation]
     # Ask mode only.
     answer: str | None = None

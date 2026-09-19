@@ -53,8 +53,11 @@ export function AuthorityList({ citations, activeIndex, onOpen, registerChip, sh
                   <span className="mt-0.5 block font-mono text-xs text-ink-3">
                     {COLLECTION_LABEL[citation.collection]} · {provenance(citation)}
                   </span>
+                  {citation.via && (
+                    <span className="mt-0.5 block truncate font-mono text-xs text-ink-2">{citation.via}</span>
+                  )}
                   {showPassage && (
-                    <span className="mt-2 line-clamp-3 block font-serif text-[0.95rem] leading-relaxed text-ink-2">
+                    <span className="mt-2 line-clamp-3 font-serif text-[0.95rem] leading-relaxed text-ink-2">
                       {citation.text}
                     </span>
                   )}

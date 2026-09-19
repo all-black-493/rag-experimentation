@@ -9,6 +9,7 @@ from app.metadata import Collection
 class Citation(TypedDict):
     index: int
     collection: Collection
+    doc_id: str
     title: str
     url: str
     # Judgments only.
@@ -21,6 +22,9 @@ class Citation(TypedDict):
     text: str
     parent_text: str
     relevance_score: float | None
+    # Why the citation graph pulled this passage in, when it did:
+    # "cites Kaingu Elias Kasono v Republic".
+    via: str | None
 
 
 def _iso(value: object) -> str | None:
@@ -75,6 +79,7 @@ def build_citations(documents: list[Document]) -> list[Citation]:
         Citation(
             index=i,
             collection=doc.metadata.get("collection", "legislation"),
+            doc_id=doc.metadata.get("doc_id", ""),
             title=doc.metadata.get("title") or doc.metadata.get("url", "unknown"),
             url=doc.metadata.get("url", ""),
             court=doc.metadata.get("court"),
@@ -85,6 +90,7 @@ def build_citations(documents: list[Document]) -> list[Citation]:
             text=doc.page_content,
             parent_text=context_text(doc),
             relevance_score=doc.metadata.get("relevance_score"),
+            via=doc.metadata.get("via"),
         )
         for i, doc in enumerate(documents, start=1)
     ]

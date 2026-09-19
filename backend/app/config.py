@@ -70,6 +70,16 @@ class Settings(BaseSettings):
     min_candidates_per_subquery: int = 5
     # How many reranked passages search mode returns for review.
     search_results: int = 10
+    # Citation-graph expansion, bounded so the reranker's pool stays sane:
+    # passages pulled in per authority the question names, and documents
+    # one hop from the top candidates when the question is relational.
+    graph_expansion_enabled: bool = True
+    graph_max_lookup_passages: int = 12
+    graph_max_neighbours: int = 8
+    # The cross-encoder costs ~70 ms per candidate on a CPU, so expansion may
+    # not grow the pool past this: its passages displace the weakest hybrid
+    # candidates instead, and the request path's cost stays flat.
+    graph_candidate_budget: int = 40
     # How BM25 and vector rankings are combined. "relative" (Weaviate's default
     # relativeScoreFusion) normalises and blends the scores; "ranked" is
     # reciprocal rank fusion, which uses ranks only and ignores magnitude.
@@ -131,7 +141,6 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_base_url: str = "https://cloud.langfuse.com"
     langfuse_environment: str = "development"
-
 
     @model_validator(mode="after")
     def _check_chunking(self) -> "Settings":

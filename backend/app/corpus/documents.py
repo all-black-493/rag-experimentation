@@ -60,6 +60,11 @@ class SourceDocument:
     fallback_joins: int = 0
 
 
+def clean_title(raw: str) -> str:
+    """The scrape's breadcrumb arrow and non-breaking spaces are not part of a title."""
+    return raw.replace("\xa0", " ").rstrip(" \u2192>").strip()
+
+
 def parse_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -161,7 +166,7 @@ def reconstruct(rows: list[dict]) -> list[SourceDocument]:
                 collection=collection,
                 doc_id=content_id(url),
                 url=url,
-                title=metadata.get("title", "").replace("\xa0", " ").strip() or url,
+                title=clean_title(metadata.get("title", "")) or url,
                 text=text,
                 fallback_joins=fallbacks,
                 **_provenance(url, metadata),

@@ -25,7 +25,9 @@ from pathlib import Path
 
 import httpx
 
-DATASET = Path(__file__).resolve().parent / "golden_dataset.jsonl"
+EVAL_DIR = Path(__file__).resolve().parent
+DATASET = EVAL_DIR / "golden_dataset.jsonl"
+RELATIONSHIPS = EVAL_DIR / "golden_relationships.jsonl"
 
 
 @dataclass
@@ -34,23 +36,34 @@ class Scores:
     recall_at_k: float
     mrr: float
     ndcg: float
+    # Multi-answer questions only: share of the top k that are correct.
+    precision_at_k: float | None
     relaxed: int
     fallback_plans: int
 
     def render(self, label: str, k: int) -> str:
+        precision = (
+            f"   P@{k} {self.precision_at_k:6.1%}" if self.precision_at_k is not None else ""
+        )
         return (
-            f"{label:<12} recall@{k} {self.recall_at_k:6.1%}   MRR {self.mrr:6.3f}   "
-            f"nDCG {self.ndcg:6.3f}   relaxed {self.relaxed}   fallback plans "
+            f"{label:<14} recall@{k} {self.recall_at_k:6.1%}   MRR {self.mrr:6.3f}   "
+            f"nDCG {self.ndcg:6.3f}{precision}   relaxed {self.relaxed}   fallback plans "
             f"{self.fallback_plans}   (n={self.questions})"
         )
 
 
-def load_dataset() -> list[dict]:
-    return [json.loads(line) for line in DATASET.read_text().splitlines() if line.strip()]
+def load_dataset(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def score_run(ranked_sources: list[list[str]], truths: list[str], k: int) -> tuple[float, float, float]:
+def truths_of(row: dict) -> set[str]:
+    """One correct document, or several for a relationship question."""
+    return set(row["sources"]) if "sources" in row else {row["source"]}
+
+
+def score_run(ranked_sources: list[list[str]], truths: list[set[str]], k: int) -> tuple:
     hits = reciprocal = ndcg = 0.0
+    precisions: list[float] = []
     for ranked, truth in zip(ranked_sources, truths, strict=True):
         # Document-level: several passages from one document count once, at
         # the best rank any of them reached.
@@ -59,17 +72,20 @@ def score_run(ranked_sources: list[list[str]], truths: list[str], k: int) -> tup
             if source not in seen:
                 seen.append(source)
         top = seen[:k]
-        if truth in top:
-            rank = top.index(truth) + 1
+        correct = [i for i, source in enumerate(top) if source in truth]
+        if correct:
+            rank = correct[0] + 1
             hits += 1
             reciprocal += 1 / rank
             ndcg += 1 / math.log2(rank + 1)
+        if len(truth) > 1:
+            precisions.append(len(correct) / k)
     n = len(truths)
-    return hits / n, reciprocal / n, ndcg / n
+    precision = sum(precisions) / len(precisions) if precisions else None
+    return hits / n, reciprocal / n, ndcg / n, precision
 
 
-def run(api_url: str, k: int) -> Scores:
-    dataset = load_dataset()
+def run(api_url: str, k: int, dataset: list[dict]) -> Scores:
     ranked, relaxed, fallbacks = [], 0, 0
     with httpx.Client(base_url=api_url, timeout=180.0) as client:
         for row in dataset:
@@ -80,8 +96,8 @@ def run(api_url: str, k: int) -> Scores:
             relaxed += sum(1 for r in payload["retrieval"] if r["relaxed"])
             fallbacks += payload["plan"]["origin"] == "fallback"
 
-    recall, mrr, ndcg = score_run(ranked, [row["source"] for row in dataset], k)
-    return Scores(len(dataset), recall, mrr, ndcg, relaxed, fallbacks)
+    recall, mrr, ndcg, precision = score_run(ranked, [truths_of(row) for row in dataset], k)
+    return Scores(len(dataset), recall, mrr, ndcg, precision, relaxed, fallbacks)
 
 
 def main() -> int:
@@ -89,9 +105,17 @@ def main() -> int:
     parser.add_argument("--api-url", default="http://localhost:8010")
     parser.add_argument("--k", type=int, default=5, help="rank cutoff for the metrics")
     parser.add_argument("--label", default="search", help="name for this run in the output")
+    parser.add_argument(
+        "--set",
+        choices=["golden", "relationships", "both"],
+        default="golden",
+        help="golden: single-document questions; relationships: graph-derived multi-document ones",
+    )
     args = parser.parse_args()
 
-    print(run(args.api_url, args.k).render(args.label, args.k))
+    sets = {"golden": [DATASET], "relationships": [RELATIONSHIPS], "both": [DATASET, RELATIONSHIPS]}
+    dataset = [row for path in sets[args.set] for row in load_dataset(path)]
+    print(run(args.api_url, args.k, dataset).render(f"{args.label}/{args.set}", args.k))
     return 0
 
 

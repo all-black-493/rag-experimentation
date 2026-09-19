@@ -36,6 +36,7 @@ services:
       # The agentic layer's switch, for the retrieval benchmark's baseline:
       #   PLANNER_ENABLED=false docker compose up -d app
       PLANNER_ENABLED: ${PLANNER_ENABLED:-true}
+      GRAPH_EXPANSION_ENABLED: ${GRAPH_EXPANSION_ENABLED:-true}
     volumes:
       # The embedding cache has to outlive the container or it isn't a cache:
       # without this every `up --build` re-embeds the whole corpus.

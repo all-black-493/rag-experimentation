@@ -28,6 +28,8 @@ class GraphState(TypedDict):
     user_filters: LegalFilters
     plan: NotRequired[QueryPlan]
     retrieval: NotRequired[list[SubQueryResult]]
+    # What the citation graph contributed, for the trace and the API.
+    expansion: NotRequired[dict]
     documents: list[Document]
     answer: str
     # None until the verifier has judged the answer.

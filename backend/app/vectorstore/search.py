@@ -58,3 +58,21 @@ def hybrid_search(
             )
         )
     return documents
+
+
+def fetch_chunk(
+    client: WeaviateClient, collection: Collection, doc_id: str, chunk_index: int
+) -> Document | None:
+    """One specific chunk by its provenance - what a citation-graph edge points at."""
+    handle = client.collections.use(CLASS_NAMES[collection])
+    response = handle.query.fetch_objects(
+        filters=Filter.by_property("doc_id").equal(doc_id)
+        & Filter.by_property("chunk_index").equal(chunk_index),
+        limit=1,
+        return_properties=RETURN_PROPERTIES[collection],
+    )
+    if not response.objects:
+        return None
+    properties = dict(response.objects[0].properties)
+    text = properties.pop("text")
+    return Document(page_content=text, metadata={**properties, "collection": collection})

@@ -11,6 +11,7 @@ passes; running it in-process removes a network round trip, a per-query cost, an
 """
 
 import logging
+import re
 from typing import Protocol
 
 from langchain_core.documents import Document
@@ -20,6 +21,16 @@ from app.config import Settings
 logger = logging.getLogger(__name__)
 
 _model_cache: dict[str, object] = {}
+
+# Dotted leaders and rules in award tables ("damages...........Ksh. 120,000")
+# tokenise one dot per token: a 200-token passage becomes 500, and every pair
+# in its batch is padded to match. Collapsed for scoring only; the text the
+# reader sees is untouched.
+_LEADERS = re.compile(r"([.\-_=*])\1{3,}")
+
+
+def for_scoring(text: str) -> str:
+    return _LEADERS.sub(r"\1\1\1", text)
 
 
 class Reranker(Protocol):
@@ -50,7 +61,7 @@ class CrossEncoderReranker:
         if not documents:
             return []
 
-        scores = self._model.predict([(query, doc.page_content) for doc in documents])
+        scores = self._model.predict([(query, for_scoring(doc.page_content)) for doc in documents])
 
         ranked = sorted(zip(documents, scores, strict=True), key=lambda p: p[1], reverse=True)
         return [
