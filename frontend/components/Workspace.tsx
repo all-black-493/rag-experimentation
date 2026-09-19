@@ -4,12 +4,14 @@ import { SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchCatalog } from "@/lib/api";
 import type { Catalog, Mode, QueryFilters } from "@/lib/types";
+import { useMatter } from "@/lib/useMatter";
 import { useResearch } from "@/lib/useResearch";
 import { AnswerView } from "./AnswerView";
 import { AuthorityList } from "./AuthorityList";
 import { EmptyState } from "./EmptyState";
 import { FilterRail } from "./FilterRail";
 import { Header } from "./Header";
+import { MatterRail } from "./MatterRail";
 import { PlanStrip } from "./PlanStrip";
 import { QueryComposer } from "./QueryComposer";
 import { SourcePanel } from "./SourcePanel";
@@ -32,6 +34,8 @@ export function Workspace() {
   const chips = useRef(new Map<number, HTMLButtonElement>());
   const lastOpener = useRef<HTMLButtonElement | null>(null);
   const { state, submit, cancel } = useResearch();
+  const matter = useMatter();
+  const matterId = matter.current?.id ?? null;
 
   useEffect(() => {
     fetchCatalog().then(setCatalog).catch((e: Error) => setCatalogError(e.message));
@@ -52,9 +56,9 @@ export function Workspace() {
   const ask = useCallback(
     (text: string) => {
       setOpenIndex(null);
-      submit(text, mode, filters);
+      submit(text, mode, filters, matterId);
     },
-    [submit, mode, filters],
+    [submit, mode, filters, matterId],
   );
 
   const registerChip = useCallback((index: number, el: HTMLButtonElement | null) => {
@@ -120,7 +124,7 @@ export function Workspace() {
           ].join(" ")}
         >
           <div className="flex items-center justify-between px-5 pt-4 lg:pt-6">
-            <h2 className="font-mono text-xs uppercase tracking-[0.08em] text-ink-3">Restrict to</h2>
+            <h2 className="font-mono text-xs uppercase tracking-[0.08em] text-ink-3">Matter</h2>
             <button
               type="button"
               onClick={() => setRailOpen(false)}
@@ -130,11 +134,30 @@ export function Workspace() {
               <X size={18} aria-hidden="true" />
             </button>
           </div>
+          <div className="px-5 pt-3">
+            <MatterRail
+              matters={matter.matters}
+              current={matter.current}
+              error={matter.error}
+              onSelect={matter.select}
+              onCreate={matter.create}
+              onUpload={matter.upload}
+              onRemove={matter.remove}
+            />
+          </div>
+          <h2 className="px-5 pt-8 font-mono text-xs uppercase tracking-[0.08em] text-ink-3">
+            Restrict to
+          </h2>
           <div className="px-5 pt-4 pb-8">
             {catalogError ? (
               <p className="text-sm text-ink-2">Filters unavailable: {catalogError}</p>
             ) : (
-              <FilterRail catalog={catalog} value={filters} onChange={setFilters} />
+              <FilterRail
+                catalog={catalog}
+                value={filters}
+                onChange={setFilters}
+                matter={matter.current}
+              />
             )}
           </div>
         </aside>

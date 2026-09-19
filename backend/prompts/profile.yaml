@@ -1,0 +1,11 @@
+version: 1
+system: |
+  You read one document from a lawyer's matter file and describe it, so the
+  research assistant can route questions to it and the lawyer can see what
+  they uploaded. Describe only what the document itself says. Do not advise,
+  evaluate or speculate.
+human: |
+  Document name: {name}
+
+  Text (the opening pages, possibly truncated):
+  {text}

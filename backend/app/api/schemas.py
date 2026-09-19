@@ -2,6 +2,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.matters.models import (  # noqa: F401 - re-exported as the /matters responses
+    DocumentProfile,
+    Matter,
+    MatterDocument,
+)
 from app.metadata import Collection
 from app.retrieval.catalog import Catalog  # noqa: F401 - re-exported as the /catalog response
 from app.retrieval.filters import LegalFilters
@@ -17,12 +22,13 @@ class QueryFilters(BaseModel):
     year_from: int | None = Field(default=None, ge=1800, le=2100)
     year_to: int | None = Field(default=None, ge=1800, le=2100)
 
-    def to_filters(self) -> LegalFilters:
+    def to_filters(self, matter_id: str | None = None) -> LegalFilters:
         return LegalFilters(
             collections=tuple(self.collections),
             courts=tuple(self.courts),
             year_from=self.year_from,
             year_to=self.year_to,
+            matter_id=matter_id,
         )
 
 
@@ -31,6 +37,11 @@ class QueryRequest(BaseModel):
     # search: ranked passages for review. ask: a grounded answer on top of them.
     mode: Mode = "ask"
     filters: QueryFilters = QueryFilters()
+    # The user's own documents to search alongside the corpus.
+    matter_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{12}$")
+
+    def to_filters(self) -> LegalFilters:
+        return self.filters.to_filters(self.matter_id)
 
 
 class SubQuery(BaseModel):
@@ -69,10 +80,28 @@ class Citation(BaseModel):
     decision_date: str | None = None
     year: int | None = None
     chunk_index: int | None = None
+    # Matter documents only: where on the page the passage is.
+    matter_id: str | None = None
+    page: int | None = None
+    bbox: list[float] | None = None
+    page_width: float | None = None
+    page_height: float | None = None
     text: str
     parent_text: str
     relevance_score: float | None = None
     via: str | None = None
+
+
+class MatterCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class DocumentAccepted(BaseModel):
+    """An upload was accepted; the document's status is on the matter."""
+
+    matter_id: str
+    doc_id: str
+    job_id: str
 
 
 class GraphLink(BaseModel):

@@ -63,7 +63,14 @@ or beside the page, never at the end of it.
 - **Mode toggle** (`ModeToggle`): a radiogroup; the active option sits on
   `sheet` in red.
 - **Filter rail** (`FilterRail`): checkboxes with mono counts, year inputs in
-  mono, help lines in `ink-3`. Built from `/catalog`; never hardcoded.
+  mono, help lines in `ink-3`. Built from `/catalog`; never hardcoded. The
+  matter in use appears as one more source, under its own name.
+- **Matter rail** (`MatterRail`): a native select for the matter in use, a
+  `+` for a new one (an inline name field, no modal), then one row per
+  document on hairlines — serif name, a mono line of what the index knows
+  (`contract · 2 pages · 14 passages`), `indexing` in red while it works, the
+  error itself when it fails — and an outlined *Add documents* button. No
+  copy explains any of it.
 - **Plan strip** (`PlanStrip`): one mono line — live status in red while
   running, then what was consulted, query count, and any widened restriction.
 - **Citation chip** (`CitationChip`): `[n]` as a small mono tab in red-tint;
@@ -80,6 +87,11 @@ or beside the page, never at the end of it.
   provisions, a link-out glyph when the document is in the corpus. Folded at
   20 rows behind a mono count. Nothing renders when the graph has no record;
   no empty-state copy.
+- **Page** (`PdfPage`): for a citation to the user's own PDF, the cited page
+  rendered in the bundle at the column's width, white on the sheet with a
+  hairline, the highlighter swept over the box the passage came from
+  (`.marker--sweep`, multiplied onto the page). A skeleton holds the page's
+  proportions while it loads; a page that fails to render simply isn't there.
 - **Empty state**: a sentence of purpose and three real questions as rows.
 - **Skeletons** shimmer in paper tones; no spinners in content.
 

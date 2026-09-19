@@ -10,6 +10,7 @@ import logging
 
 from langchain_core.documents import Document
 
+from app.metadata import MATTER
 from app.resilience import CircuitBreaker, CircuitOpenError
 from app.retrieval.pairwise import PairwiseReranker
 from app.retrieval.reranker import Reranker
@@ -27,6 +28,18 @@ RERANK_SPAN_NAME = "rerank-cross-encoder"
 def _identity(doc: Document) -> tuple:
     """Match a reranked copy back to the candidate it came from."""
     return (doc.metadata.get("url"), doc.metadata.get("chunk_index"))
+
+
+def _passes(doc: Document, threshold: float) -> bool:
+    """The threshold guards against answering from passages that merely look
+    relevant. The user's own documents are exempt: they are in scope because
+    the user put them there, and the cross-encoder's absolute scores for a
+    contract's clauses run low even when its ranking of them is right - with
+    the threshold applied, three of twenty matter questions found nothing at
+    all (MEASUREMENTS.md). Their order still comes from the score."""
+    if doc.metadata.get("collection") == MATTER:
+        return True
+    return doc.metadata.get("relevance_score", 0.0) >= threshold
 
 
 def rerank(
@@ -73,11 +86,7 @@ def rerank(
             )
             return {"documents": fallback}
 
-        relevant = [
-            doc
-            for doc in reranked
-            if doc.metadata.get("relevance_score", 0.0) >= relevance_threshold
-        ][:limit]
+        relevant = [doc for doc in reranked if _passes(doc, relevance_threshold)][:limit]
 
         # Stage 3, over the finalists only. Failure here degrades to stage 2's
         # ordering rather than failing the query: a refinement that can't run is

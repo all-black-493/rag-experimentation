@@ -22,6 +22,7 @@ from weaviate.classes.query import HybridFusion
 from weaviate.client import WeaviateClient
 
 from app.caching import TTLCache
+from app.metadata import MATTER
 from app.retrieval.filters import LegalFilters, build_filter, merge
 from app.retrieval.plan import SubQuery
 from app.retrieval.state import GraphState, SubQueryResult
@@ -62,9 +63,11 @@ def _search(
         fusion=fusion,
         limit=k,
         filters=build_filter(filters, sub.collection),
+        tenant=filters.matter_id if sub.collection == MATTER else None,
     )
     if cache is not None:
-        cache.set(key, documents)
+        # Namespaced by matter so an upload can drop what was found before it.
+        cache.set(key, documents, namespace=filters.matter_id)
     return documents
 
 
@@ -122,7 +125,9 @@ def retrieve(
     contexts = [contextvars.copy_context() for _ in searches]
     with ThreadPoolExecutor(max_workers=len(searches)) as pool:
         outcomes = list(
-            pool.map(lambda pair: pair[0].run(run_one, pair[1]), zip(contexts, searches, strict=True))
+            pool.map(
+                lambda pair: pair[0].run(run_one, pair[1]), zip(contexts, searches, strict=True)
+            )
         )
 
     pooled: dict[tuple, Document] = {}

@@ -64,7 +64,9 @@ jobs:
 
       - name: Retrieval benchmark
         working-directory: backend/eval
-        run: uv run python retrieval_benchmark.py --label planner
+        run: |
+          uv run python retrieval_benchmark.py --label planner
+          uv run python retrieval_benchmark.py --label planner --set matter
 
       - name: Run faithfulness evaluation
         working-directory: backend/eval

@@ -111,9 +111,19 @@ class Settings(BaseSettings):
     pairwise_max_candidates: int = 5
     rerank_top_n: int = 5
     rerank_relevance_threshold: float = 0.35
+    # Score the document's title with each passage: a child chunk seldom names
+    # the Act or the file it comes from, and the question usually does.
+    rerank_with_title: bool = True
 
     # Anonymous access has no auth, so this bounds abuse per client instead.
     rate_limit_query: str = "30/minute"
+    rate_limit_upload: str = "20/minute"
+
+    # Matters: the user's own documents. Stored under data/matters, one
+    # directory per matter; indexed in the background, at most this many at
+    # once (the embedder is a CPU model).
+    max_upload_size_mb: int = 25
+    ingest_concurrency: int = 2
 
     # Corpus ingestion: objects per Weaviate batch insert.
     ingest_batch_size: int = 200

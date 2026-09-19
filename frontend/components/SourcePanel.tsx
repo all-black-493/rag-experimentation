@@ -2,9 +2,10 @@
 
 import { ChevronLeft, ChevronRight, ExternalLink, X } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
-import { COLLECTION_LABEL, provenance } from "@/lib/format";
+import { openUrl, sourceLine } from "@/lib/format";
 import type { Citation } from "@/lib/types";
 import { Neighbourhood } from "./Neighbourhood";
+import { PdfPage } from "./PdfPage";
 
 interface Props {
   citations: Citation[];
@@ -106,21 +107,27 @@ export function SourcePanel({ citations, index, onNavigate, onClose }: Props) {
           {citation.title}
         </h2>
         <p className="mt-1.5 font-mono text-xs text-ink-2">
-          {COLLECTION_LABEL[citation.collection]} · {provenance(citation)}
+          {sourceLine(citation)}
           {citation.chunk_index !== null && (
             <span className="text-ink-3"> · passage {citation.chunk_index + 1}</span>
           )}
         </p>
         {citation.via && <p className="mt-0.5 font-mono text-xs text-ink-2">{citation.via}</p>}
         <a
-          href={citation.url}
+          href={openUrl(citation)}
           target="_blank"
           rel="noopener noreferrer"
           className="mt-2 inline-flex items-center gap-1.5 text-sm text-red underline-offset-2 hover:underline"
         >
-          Open on kenyalaw.org
+          {citation.collection === "matter" ? "Open the document" : "Open on kenyalaw.org"}
           <ExternalLink size={13} aria-hidden="true" />
         </a>
+
+        {citation.collection === "matter" && citation.page !== null && (
+          <div className="mt-5">
+            <PdfPage url={openUrl(citation)} page={citation.page} bbox={citation.bbox} />
+          </div>
+        )}
 
         <div className="prose-law mt-5 whitespace-pre-line text-[1rem]">
           {segments ? (
@@ -143,7 +150,7 @@ export function SourcePanel({ citations, index, onNavigate, onClose }: Props) {
           )}
         </div>
 
-        <Neighbourhood docId={citation.doc_id} />
+        {citation.collection !== "matter" && <Neighbourhood docId={citation.doc_id} />}
       </div>
     </aside>
   );

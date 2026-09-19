@@ -17,7 +17,7 @@ self-hosted: the agent is our own LangGraph, not Weaviate Cloud's Query Agent.
 
 | | |
 |---|---|
-| `backend/` | FastAPI · LangGraph · Weaviate (self-hosted) · local embeddings + cross-encoder · Claude · Langfuse |
+| `backend/` | FastAPI · LangGraph · Weaviate (self-hosted) · local embeddings + cross-encoder · PyMuPDF · Claude · Langfuse |
 | `frontend/` | Next.js 16 · TypeScript · Tailwind v4 · a server-side proxy to the backend |
 | `corpus/` | 1,533 documents from new.kenyalaw.org: 543 Acts, 990 judgments across 7 courts (not committed, see `corpus/README.md`) |
 
@@ -50,7 +50,23 @@ parsed from Kenya Law's URLs.
 
 Two Weaviate collections with explicit schemas (`app/vectorstore/schema.py`), not autoschema:
 `Legislation` (title, url, year enacted, version date) and `CaseLaw` (plus court code, court,
-decision date). No multi-tenancy — the corpus is shared.
+decision date). No multi-tenancy — the corpus is shared. A third, `MatterDocument`, holds the
+user's own documents, one tenant per matter (below).
+
+## Matters
+
+A matter is the user's own file: the lease, the demand letter, the witness statement. Its
+documents are indexed beside the corpus and searched with it, so "what does the law say"
+and "what does my contract say" are one question.
+
+`POST /matters {name}` · `POST /matters/{id}/documents` (PDF, Word, text; validated on the
+request, indexed in the background, status on the matter) · `DELETE …/documents/{doc_id}` ·
+`GET …/files/{doc_id}` (the original, with range requests for the viewer). `POST /query`
+takes `matter_id`; the matter is then a third collection the planner can route to, told
+what each document is by a profile (summary, type, parties, dates) one model call reads off
+it after indexing. A PDF chunk never spans a page and carries the union box of its blocks,
+so a citation opens the page with the passage highlighted. Deletion removes chunks first,
+then the file and the record. Originals live under `data/matters/<id>/`.
 
 ## Retrieval
 
@@ -80,8 +96,9 @@ plan → retrieve → expand → rerank → [search] END
   tagged with why it is there (`via: "applies section 8(1) of the Sexual Offences Act"`).
   The reranker still decides, over a pool no larger than before.
   `GRAPH_EXPANSION_ENABLED=false` switches it off.
-- **rerank** — a local cross-encoder scores every candidate against the *original*
-  question; a threshold and a per-mode cut (5 for ask, 10 for search).
+- **rerank** — a local cross-encoder scores every candidate (title + passage) against the
+  *original* question; a threshold, which the user's own documents are exempt from, and a
+  per-mode cut (5 for ask, 10 for search).
 - **generate / verify** — a cited answer, streamed, then a groundedness judgment delivered
   after it as a separate verdict. The judge is a sampled model call and disagrees with
   itself a few percent of the time, so a single "not grounded" gets one independent second
@@ -131,7 +148,24 @@ from the graph itself (30–43 each). Planner off, so the graph is the only vari
 | retrieval (`--set relationships`) | recall@5 | MRR | P@5 |
 |---|---|---|---|
 | hybrid search only | 80.0% | 0.750 | 72.0% |
-| **+ citation-graph expansion** (shipped) | **100.0%** | **0.950** | **90.0%** |
+| **+ citation-graph expansion** (shipped) | **100.0%** | **0.950** | **94.0%** |
+
+`golden_matter.jsonl` holds 20 questions over three fixture documents (a lease, a demand
+letter, a witness statement, `eval/fixtures/matter/`) uploaded to a fresh matter. `--set
+matter` scores the document and the page:
+
+| `--set matter`, planner off | recall@5 | MRR | page@5 |
+|---|---|---|---|
+| whole corpus in scope (the document competes with 84k chunks of law) | 100.0% | 0.871 | 95.0% |
+| the matter alone | 100.0% | 0.900 | 100.0% |
+
+Two things the set changed. The cross-encoder now scores the document's **title with each
+passage** — a 200-token child seldom names its own document, and "what does the lease say"
+ranked a letter mentioning the lease above the lease itself; the same fix lifted the
+relationship set's P@5 from 90% to 94% and put the Sexual Offences Act back in the top five
+for a question about its section 8. And the **relevance floor no longer applies to the
+user's own documents**: the cross-encoder's absolute scores for a contract's clauses run
+low even when its ranking of them is right, and three questions were returning nothing.
 
 On the single-document golden set the expansion changes nothing (100% / 0.968 / 0.976
 either way): it only widens the pool, and the reranker keeps what was already right.
@@ -146,7 +180,7 @@ to the reranker never grows — graph passages displace the weakest hybrid candi
 ## API
 
 `POST /query` `{question, mode: "search" | "ask", filters?: {collections, courts,
-year_from, year_to}}` → `{plan, retrieval, citations, answer?, grounded?}`.
+year_from, year_to}, matter_id?}` → `{plan, retrieval, citations, answer?, grounded?}`.
 `POST /query/stream` — the same as server-sent events: `plan` → `sources` → `token`… →
 `done` (the final answer) → `verdict` (grounded, or withdrawn). `GET /catalog` — what the
 corpus contains, for the UI's filters. `GET /graph/{doc_id}` — what a document cites and
@@ -159,8 +193,10 @@ A research desk, not a chat: the query slip at the top of the page, the answer a
 argument, each `[n]` opening the authority in a bundle beside the page — a bottom sheet on a
 phone, a drawer at laptop width, a column from 1280px. The source is never below the answer.
 An authority the graph added says why it is there; the bundle lists what each authority
-cites and what cites it, each row opening the document. Filters come from `/catalog`. The
-design world is recorded in `DESIGN.md`; product truth in `PRODUCT.md`.
+cites and what cites it, each row opening the document. The rail holds the matter in use:
+its documents, their status, and the way to add more; a citation to one of them renders the
+page in the bundle with the passage highlighted (PDF.js, loaded on first use). Filters come
+from `/catalog`. The design world is recorded in `DESIGN.md`; product truth in `PRODUCT.md`.
 
 `frontend/app/api/[...path]/route.ts` proxies to `BACKEND_URL`, attaching `PROXY_SECRET`
 server-side, so the browser stays same-origin and the secret never ships.
@@ -193,9 +229,11 @@ generations link to the version that produced them.
 - `run_eval.py` — the faithfulness gate: ragas faithfulness ≥ 0.8, answer rate ≥ 0.9,
   citation coverage ≥ 0.8, zero invalid citations, no API errors.
 - `retrieval_benchmark.py` — the tables above, in seconds, no judge; `--set golden |
-  relationships | both`.
+  relationships | both | matter`.
 - `golden_relationships.jsonl` — 10 multi-document questions, generated from the citation
   graph by `build_relationship_questions.py`.
+- `golden_matter.jsonl` + `fixtures/matter/` — 20 questions over one matter's three
+  documents, authored as Markdown and rendered to PDF by `build_matter_fixtures.py`.
 
 `.github/workflows/eval.yml` runs unit tests, ingests the slice, runs both, on every PR.
 
@@ -206,12 +244,14 @@ backend/app/
   corpus/       documents (reconstruction), courts, chunking, splitting, parenting, ingest CLI
   vectorstore/  client, schema (explicit collections), search (hybrid), embeddings
   graph/        refs (extraction), resolve, edges, store (Weaviate + in-memory), build CLI
+  matters/      models, store (disk), pdf (blocks → page + box), loaders, chunking,
+                ingest (the job), enrich (profile), delete, catalog (for the planner)
   retrieval/    catalog, plan (schema), planner (node), filters, retrieve, expand, rerank,
                 answer, grounding, citations, run (one query under one trace), graph (wiring)
-  api/          schemas, routes/{query,catalog,graph}, streaming (thread → SSE bridge)
-  config, main, dependencies, proxy_auth, rate_limit, caching, resilience, scoring,
+  api/          schemas, routes/{query,catalog,graph,matters}, streaming (thread → SSE bridge)
+  config, main, dependencies, jobs, proxy_auth, rate_limit, caching, resilience, scoring,
   tracing, metrics, prompts, prompt_sync
-backend/prompts/   planner, generation, grounding, responses
+backend/prompts/   planner, generation, grounding, profile, responses
 backend/eval/      the harness above
 frontend/          app/ (layout, page, api proxy), components/, lib/ (types, api, stream, hook)
 ```

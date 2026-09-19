@@ -27,9 +27,7 @@ def to_response(outcome: QueryOutcome) -> QueryResponse:
 
 @router.post("")
 async def answer_question(payload: QueryRequest, graph: GraphDep) -> QueryResponse:
-    outcome = await asyncify(run_query)(
-        graph, payload.question, payload.mode, payload.filters.to_filters()
-    )
+    outcome = await asyncify(run_query)(graph, payload.question, payload.mode, payload.to_filters())
     return to_response(outcome)
 
 
@@ -40,6 +38,6 @@ async def stream_answer(payload: QueryRequest, graph: GraphDep) -> AsyncIterable
     `done` carries the full QueryResponse; everything before it is a preview
     the client may render immediately and must replace when `done` lands.
     """
-    events = stream_query(graph, payload.question, payload.mode, payload.filters.to_filters())
+    events = stream_query(graph, payload.question, payload.mode, payload.to_filters())
     async for event in sse_events(events, finalize=to_response):
         yield event

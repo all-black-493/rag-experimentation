@@ -19,6 +19,8 @@ from collections.abc import Callable
 from langchain_core.language_models import BaseChatModel
 
 from app.caching import TTLCache
+from app.matters.catalog import describe_matter
+from app.matters.store import MatterStore
 from app.retrieval.catalog import Catalog
 from app.retrieval.filters import collections_in_scope
 from app.retrieval.plan import QueryPlan, constrain, fallback_plan
@@ -36,22 +38,31 @@ def plan(
     max_subqueries: int,
     enabled: bool = True,
     cache: TTLCache | None = None,
+    matters: MatterStore | None = None,
 ) -> dict:
     """Decide where to search. `catalog` is a callable so a refreshed catalog is seen.
 
     Plans are cached by question and user filters: the same question asked twice
     should not pay for planning twice, and a plan is a deterministic function of
     exactly those two inputs plus the catalog, which changes on the order of
-    minutes.
+    minutes. A matter's documents change with every upload, so its version is
+    part of the key too.
     """
     user = state["user_filters"]
     scope = collections_in_scope(user)
     if not enabled:
         return {"plan": fallback_plan(state["question"], scope)}
 
-    key = TTLCache.key("plan", state["question"], repr(user.describe()))
+    matter = matters.get(user.matter_id) if matters and user.matter_id else None
+    key = TTLCache.key(
+        "plan", state["question"], repr(user.describe()), matter.updated_at if matter else ""
+    )
     if cache is not None and (hit := cache.get(key)) is not None:
         return {"plan": hit}
+
+    catalog_text = catalog().for_planner()
+    if matter is not None:
+        catalog_text = f"{catalog_text}\n{describe_matter(matter)}"
 
     with observation(
         as_type="chain",
@@ -63,7 +74,7 @@ def plan(
             planner = llm.with_structured_output(QueryPlan)
             message = PLANNER_PROMPT.template.invoke(
                 {
-                    "catalog": catalog().for_planner(),
+                    "catalog": catalog_text,
                     "collections": ", ".join(scope),
                     "max_subqueries": max_subqueries,
                     "question": state["question"],
@@ -93,4 +104,3 @@ def plan(
         if cache is not None and produced.origin == "planner":
             cache.set(key, produced)
         return {"plan": produced}
-

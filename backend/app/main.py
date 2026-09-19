@@ -1,5 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
+from pathlib import Path
 
 from fastapi import FastAPI
 from langchain_anthropic import ChatAnthropic
@@ -7,10 +9,13 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIASGIMiddleware
 
-from app.api.routes import catalog, graph, query
+from app.api.routes import catalog, graph, matters, query
 from app.caching import TTLCache, enable_llm_cache
 from app.config import get_settings
 from app.graph.store import ensure_citation_collection, load_graph
+from app.jobs import JobRegistry
+from app.matters.ingest import ingest
+from app.matters.store import MatterStore
 from app.proxy_auth import require_proxy_secret
 from app.rate_limit import limiter
 from app.resilience import CircuitBreaker
@@ -22,6 +27,8 @@ from app.tracing import configure_tracing, shutdown_tracing
 from app.vectorstore.client import weaviate_client
 from app.vectorstore.embeddings import build_embeddings, warm_embeddings
 from app.vectorstore.schema import ensure_collections
+
+MATTERS_DIR = Path(__file__).resolve().parent.parent / "data" / "matters"
 
 
 @asynccontextmanager
@@ -75,6 +82,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ensure_citation_collection(client)
         citation_graph = load_graph(client)
         app.state.citation_graph = citation_graph
+        # Matters: the store on disk, the job runner, and the one function an
+        # upload hands to it.
+        retrieval_cache = TTLCache(settings.retrieval_cache_ttl_seconds)
+        matter_store = MatterStore(MATTERS_DIR)
+        app.state.client = client
+        app.state.matters = matter_store
+        app.state.jobs = JobRegistry(max_concurrency=settings.ingest_concurrency)
+        app.state.retrieval_cache = retrieval_cache
+        app.state.ingest = partial(ingest, matter_store, client, embeddings, settings, planner)
         app.state.graph = build_graph(
             client=client,
             embeddings=embeddings,
@@ -86,9 +102,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             planner=planner,
             verifier=verifier,
             rerank_breaker=rerank_breaker,
-            retrieval_cache=TTLCache(settings.retrieval_cache_ttl_seconds),
+            retrieval_cache=retrieval_cache,
             plan_cache=TTLCache(settings.retrieval_cache_ttl_seconds),
             pairwise=pairwise,
+            matters=matter_store,
         )
         try:
             yield
@@ -105,6 +122,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.include_router(query.router)
 app.include_router(catalog.router)
 app.include_router(graph.router)
+app.include_router(matters.router)
 
 
 @app.get("/health")

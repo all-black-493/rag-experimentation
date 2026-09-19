@@ -29,8 +29,16 @@ _model_cache: dict[str, object] = {}
 _LEADERS = re.compile(r"([.\-_=*])\1{3,}")
 
 
-def for_scoring(text: str) -> str:
-    return _LEADERS.sub(r"\1\1\1", text)
+def for_scoring(text: str, title: str | None = None) -> str:
+    """What the cross-encoder reads for one passage.
+
+    The title goes in front of the text: a 200-token child rarely names its
+    own document, so "what does the lease say about rent" scored the lease's
+    rent clause below a letter that mentions the lease. Measured, not assumed -
+    see MEASUREMENTS.md.
+    """
+    text = _LEADERS.sub(r"\1\1\1", text)
+    return f"{title}\n{text}" if title else text
 
 
 class Reranker(Protocol):
@@ -44,9 +52,10 @@ class CrossEncoderReranker:
     far more than the inference itself.
     """
 
-    def __init__(self, model_name: str, top_n: int):
+    def __init__(self, model_name: str, top_n: int, with_title: bool = True):
         self._model_name = model_name
         self._top_n = top_n
+        self._with_title = with_title
 
     @property
     def _model(self):
@@ -61,7 +70,17 @@ class CrossEncoderReranker:
         if not documents:
             return []
 
-        scores = self._model.predict([(query, for_scoring(doc.page_content)) for doc in documents])
+        scores = self._model.predict(
+            [
+                (
+                    query,
+                    for_scoring(
+                        doc.page_content, doc.metadata.get("title") if self._with_title else None
+                    ),
+                )
+                for doc in documents
+            ]
+        )
 
         ranked = sorted(zip(documents, scores, strict=True), key=lambda p: p[1], reverse=True)
         return [
@@ -88,7 +107,7 @@ def build_reranker(settings: Settings) -> Reranker:
             top_n=top_n,
         )
 
-    return CrossEncoderReranker(settings.cross_encoder_model, top_n)
+    return CrossEncoderReranker(settings.cross_encoder_model, top_n, settings.rerank_with_title)
 
 
 def warm_reranker(settings: Settings) -> None:

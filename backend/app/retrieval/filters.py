@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from weaviate.classes.query import Filter
 
-from app.metadata import COLLECTIONS, Collection
+from app.metadata import COLLECTIONS, MATTER, Collection
 
 
 @dataclass(frozen=True)
@@ -28,11 +28,17 @@ class LegalFilters:
     # Inclusive. Year decided for judgments, year enacted for Acts.
     year_from: int | None = None
     year_to: int | None = None
+    # The user's own documents in scope, when the request names a matter.
+    # Scope rather than a restriction: it adds a collection instead of
+    # narrowing one, and the planner is told what the matter holds.
+    matter_id: str | None = None
 
     def is_empty(self) -> bool:
         return not (self.collections or self.courts or self.year_from or self.year_to)
 
     def allows(self, collection: Collection) -> bool:
+        if collection == MATTER and self.matter_id is None:
+            return False
         return not self.collections or collection in self.collections
 
     def admits(self, metadata: dict) -> bool:
@@ -44,7 +50,11 @@ class LegalFilters:
         collection = metadata.get("collection")
         if not self.allows(collection):
             return False
-        if collection == "case_law" and self.courts and metadata.get("court_code") not in self.courts:
+        if (
+            collection == "case_law"
+            and self.courts
+            and metadata.get("court_code") not in self.courts
+        ):
             return False
         year = metadata.get("year")
         if (self.year_from is not None or self.year_to is not None) and year is None:
@@ -78,6 +88,7 @@ class LegalFilters:
                 "courts": list(self.courts),
                 "year_from": self.year_from,
                 "year_to": self.year_to,
+                "matter_id": self.matter_id,
             }.items()
             if value
         }
@@ -107,6 +118,7 @@ def merge(user: LegalFilters, planned: LegalFilters) -> LegalFilters:
         courts=courts,
         year_from=year_from,
         year_to=year_to,
+        matter_id=user.matter_id,
     )
 
 
@@ -132,4 +144,7 @@ def build_filter(filters: LegalFilters, collection: Collection) -> Filter | None
 
 
 def collections_in_scope(filters: LegalFilters) -> tuple[Collection, ...]:
-    return filters.collections or COLLECTIONS
+    """The corpus, plus the matter when there is one; or exactly what the user ticked."""
+    if filters.collections:
+        return tuple(c for c in filters.collections if filters.allows(c))
+    return (*COLLECTIONS, MATTER) if filters.matter_id else COLLECTIONS

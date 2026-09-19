@@ -56,14 +56,17 @@ export function useResearch() {
   useEffect(() => cancel, [cancel]);
 
   const submit = useCallback(
-    async (question: string, mode: Mode, filters: QueryFilters) => {
+    async (question: string, mode: Mode, filters: QueryFilters, matterId: string | null = null) => {
       cancel();
       const current = new AbortController();
       controller.current = current;
       setState({ ...INITIAL, phase: "planning", question, mode });
 
       try {
-        for await (const event of streamQuery({ question, mode, filters }, current.signal)) {
+        for await (const event of streamQuery(
+          { question, mode, filters, matter_id: matterId },
+          current.signal,
+        )) {
           if (current.signal.aborted) return;
           switch (event.event) {
             case "plan":

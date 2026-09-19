@@ -1,10 +1,15 @@
+from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import Depends, Request
 from langgraph.graph.state import CompiledStateGraph
+from weaviate.client import WeaviateClient
 
+from app.caching import TTLCache
 from app.config import Settings, get_settings
 from app.graph.store import Graph
+from app.jobs import JobRegistry
+from app.matters.store import MatterStore
 from app.retrieval.catalog import Catalog
 
 
@@ -20,7 +25,33 @@ def get_citation_graph(request: Request) -> Graph:
     return request.app.state.citation_graph
 
 
+def get_client(request: Request) -> WeaviateClient:
+    return request.app.state.client
+
+
+def get_matter_store(request: Request) -> MatterStore:
+    return request.app.state.matters
+
+
+def get_jobs(request: Request) -> JobRegistry:
+    return request.app.state.jobs
+
+
+def get_ingest(request: Request) -> Callable[[str, str], int]:
+    """The ingest job for one document: (matter_id, doc_id) -> chunks indexed."""
+    return request.app.state.ingest
+
+
+def get_retrieval_cache(request: Request) -> TTLCache:
+    return request.app.state.retrieval_cache
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 GraphDep = Annotated[CompiledStateGraph, Depends(get_graph)]
 CatalogDep = Annotated[Catalog, Depends(get_catalog)]
 CitationGraphDep = Annotated[Graph, Depends(get_citation_graph)]
+ClientDep = Annotated[WeaviateClient, Depends(get_client)]
+MatterStoreDep = Annotated[MatterStore, Depends(get_matter_store)]
+JobsDep = Annotated[JobRegistry, Depends(get_jobs)]
+IngestDep = Annotated[Callable[[str, str], int], Depends(get_ingest)]
+RetrievalCacheDep = Annotated[TTLCache, Depends(get_retrieval_cache)]

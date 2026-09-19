@@ -1,5 +1,5 @@
 import { readEvents } from "./stream";
-import type { Catalog, GraphNeighbourhood, QueryRequest, StreamEvent } from "./types";
+import type { Catalog, GraphNeighbourhood, Matter, QueryRequest, StreamEvent } from "./types";
 
 async function failure(response: Response): Promise<Error> {
   try {
@@ -22,6 +22,46 @@ export async function fetchNeighbourhood(docId: string): Promise<GraphNeighbourh
   if (response.status === 404) return null;
   if (!response.ok) throw await failure(response);
   return response.json();
+}
+
+export async function listMatters(): Promise<Matter[]> {
+  const response = await fetch("/api/matters");
+  if (!response.ok) throw await failure(response);
+  return response.json();
+}
+
+export async function createMatter(name: string): Promise<Matter> {
+  const response = await fetch("/api/matters", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) throw await failure(response);
+  return response.json();
+}
+
+export async function fetchMatter(id: string): Promise<Matter> {
+  const response = await fetch(`/api/matters/${id}`, { cache: "no-store" });
+  if (!response.ok) throw await failure(response);
+  return response.json();
+}
+
+/** Accepted, not indexed: the document's status on the matter says when it is. */
+export async function uploadDocument(matterId: string, file: File): Promise<void> {
+  const body = new FormData();
+  body.append("file", file, file.name);
+  const response = await fetch(`/api/matters/${matterId}/documents`, { method: "POST", body });
+  if (!response.ok) throw await failure(response);
+}
+
+export async function deleteDocument(matterId: string, docId: string): Promise<void> {
+  const response = await fetch(`/api/matters/${matterId}/documents/${docId}`, { method: "DELETE" });
+  if (!response.ok) throw await failure(response);
+}
+
+/** Where the original is served from, same-origin, for the viewer and for a link out. */
+export function documentUrl(matterId: string, docId: string): string {
+  return `/api/matters/${matterId}/files/${docId}`;
 }
 
 export async function* streamQuery(

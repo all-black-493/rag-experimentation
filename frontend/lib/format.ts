@@ -3,6 +3,7 @@ import type { Citation, Collection, SubQueryOutcome } from "./types";
 export const COLLECTION_LABEL: Record<Collection, string> = {
   legislation: "Legislation",
   case_law: "Case law",
+  matter: "Matter",
 };
 
 const DATE = new Intl.DateTimeFormat("en-KE", { day: "numeric", month: "short", year: "numeric" });
@@ -13,12 +14,25 @@ export function formatDate(iso: string | null): string | null {
   return Number.isNaN(date.getTime()) ? iso : DATE.format(date);
 }
 
-/** "Court of Appeal · 25 Mar 2026" or "Act of 1953". */
+/** "Court of Appeal · 25 Mar 2026", "Act of 1953", or "p. 2" for the user's own document. */
 export function provenance(citation: Citation): string {
   if (citation.collection === "case_law") {
     return [citation.court, formatDate(citation.decision_date)].filter(Boolean).join(" · ");
   }
+  if (citation.collection === "matter") {
+    return citation.page ? `p. ${citation.page}` : "";
+  }
   return citation.year ? `Act of ${citation.year}` : "Legislation";
+}
+
+/** The one mono line under a title: "Case law · High Court · 24 Mar 2026". */
+export function sourceLine(citation: Citation): string {
+  return [COLLECTION_LABEL[citation.collection], provenance(citation)].filter(Boolean).join(" · ");
+}
+
+/** Where the citation opens: Kenya Law for the corpus, the stored original for a matter. */
+export function openUrl(citation: Citation): string {
+  return citation.collection === "matter" ? `/api${citation.url}` : citation.url;
 }
 
 /** A short line on what a sub-query covered: "Case law · Supreme Court · 2024–2026". */

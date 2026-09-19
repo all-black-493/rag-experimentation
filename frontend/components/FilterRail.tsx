@@ -1,11 +1,13 @@
 "use client";
 
-import type { Catalog, Collection, QueryFilters } from "@/lib/types";
+import type { Catalog, Collection, Matter, QueryFilters } from "@/lib/types";
 
 interface Props {
   catalog: Catalog | null;
   value: QueryFilters;
   onChange: (filters: QueryFilters) => void;
+  // The matter in use, if any: its documents are one more source to tick.
+  matter?: Matter | null;
 }
 
 /**
@@ -13,8 +15,21 @@ interface Props {
  * a court or a year the corpus doesn't have. Nothing here is decorative: every
  * control changes what the planner is allowed to search.
  */
-export function FilterRail({ catalog, value, onChange }: Props) {
+export function FilterRail({ catalog, value, onChange, matter = null }: Props) {
   if (!catalog) return <RailSkeleton />;
+
+  const sources: { key: Collection; label: string; count: number }[] = [
+    ...catalog.collections.map((c) => ({ key: c.key, label: c.label, count: c.documents })),
+    ...(matter
+      ? [
+          {
+            key: "matter" as const,
+            label: matter.name,
+            count: matter.documents.filter((d) => d.status === "indexed").length,
+          },
+        ]
+      : []),
+  ];
 
   const caseLaw = catalog.collections.find((c) => c.key === "case_law");
   const caseLawAllowed = value.collections.length === 0 || value.collections.includes("case_law");
@@ -46,24 +61,23 @@ export function FilterRail({ catalog, value, onChange }: Props) {
       <fieldset>
         <legend className="mb-2 font-medium">Sources</legend>
         <div className="flex flex-col gap-1.5">
-          {catalog.collections.map((collection) => (
-            <label key={collection.key} className="flex cursor-pointer items-baseline gap-2.5">
+          {sources.map((source) => (
+            <label key={source.key} className="flex cursor-pointer items-baseline gap-2.5">
               <input
                 type="checkbox"
                 className="translate-y-px accent-red"
-                checked={!value.collections.length || value.collections.includes(collection.key)}
-                onChange={() => toggleCollection(collection.key)}
+                checked={!value.collections.length || value.collections.includes(source.key)}
+                onChange={() => toggleCollection(source.key)}
               />
-              <span className="flex-1">
-                {collection.label}
+              <span className="min-w-0 flex-1 truncate">
+                {source.label}
                 <span className="ml-1.5 font-mono text-xs text-ink-3 tabular">
-                  {collection.documents.toLocaleString()}
+                  {source.count.toLocaleString()}
                 </span>
               </span>
             </label>
           ))}
         </div>
-        <p className="mt-2 text-xs text-ink-3">Untick one to search only the other.</p>
       </fieldset>
 
       {caseLaw && caseLaw.courts.length > 0 && (
@@ -124,10 +138,11 @@ export function FilterRail({ catalog, value, onChange }: Props) {
             className="w-full min-w-0 rounded-control border border-rule-2 bg-sheet px-2.5 py-1.5 font-mono text-sm tabular placeholder:text-ink-3 focus:border-ink-3 focus:outline-none"
           />
         </div>
-        <p className="mt-2 text-xs text-ink-3">
-          {yearMin && yearMax ? `${yearMin}–${yearMax} available. ` : ""}
-          Decided, for judgments; enacted, for Acts.
-        </p>
+        {yearMin && yearMax && (
+          <p className="mt-2 font-mono text-xs text-ink-3 tabular">
+            {yearMin}–{yearMax}
+          </p>
+        )}
       </fieldset>
 
       {!isDefault && (

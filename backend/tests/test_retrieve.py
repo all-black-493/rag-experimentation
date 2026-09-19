@@ -23,9 +23,12 @@ class FakeSearch:
         self.answers = answers
         self.calls: list[tuple] = []
 
-    def __call__(self, client, collection, query, vector, *, alpha, fusion, limit, filters=None):
+    def __call__(
+        self, client, collection, query, vector, *, alpha, fusion, limit, filters=None, tenant=None
+    ):
         key = (collection, query, filters is not None)
         self.calls.append(key)
+        self.tenants = {**getattr(self, "tenants", {}), collection: tenant}
         return self.answers.get(key, [])
 
 

@@ -15,8 +15,8 @@ const PROXY_SECRET = process.env.PROXY_SECRET;
 
 // Everything else is served by this app itself.
 const ALLOWED = ["query", "query/stream", "catalog", "health"];
-// Routes with a document id after the prefix.
-const ALLOWED_PREFIXES = ["graph/"];
+// Routes with an id after the prefix.
+const ALLOWED_PREFIXES = ["graph/", "matters"];
 
 function allowed(target: string): boolean {
   return ALLOWED.includes(target) || ALLOWED_PREFIXES.some((prefix) => target.startsWith(prefix));
@@ -33,8 +33,10 @@ async function proxy(request: NextRequest, ctx: RouteContext<"/api/[...path]">) 
   }
 
   const headers = new Headers();
-  const contentType = request.headers.get("content-type");
-  if (contentType) headers.set("content-type", contentType);
+  for (const name of ["content-type", "content-length", "range", "if-range"]) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
   headers.set("accept", request.headers.get("accept") ?? "application/json");
   if (PROXY_SECRET) headers.set("x-proxy-secret", PROXY_SECRET);
   const client =
@@ -52,7 +54,15 @@ async function proxy(request: NextRequest, ctx: RouteContext<"/api/[...path]">) 
   });
 
   const passthrough = new Headers();
-  for (const name of ["content-type", "cache-control"]) {
+  // The range headers let a PDF viewer fetch one page of a long document.
+  for (const name of [
+    "content-type",
+    "cache-control",
+    "content-length",
+    "content-range",
+    "accept-ranges",
+    "content-disposition",
+  ]) {
     const value = upstream.headers.get(name);
     if (value) passthrough.set(name, value);
   }
@@ -61,3 +71,4 @@ async function proxy(request: NextRequest, ctx: RouteContext<"/api/[...path]">) 
 
 export const GET = proxy;
 export const POST = proxy;
+export const DELETE = proxy;

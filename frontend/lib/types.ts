@@ -1,6 +1,6 @@
 // Mirrors backend/app/api/schemas.py. Change both or neither.
 
-export type Collection = "legislation" | "case_law";
+export type Collection = "legislation" | "case_law" | "matter";
 export type Mode = "search" | "ask";
 
 export interface QueryFilters {
@@ -14,6 +14,8 @@ export interface QueryRequest {
   question: string;
   mode: Mode;
   filters: QueryFilters;
+  // The user's own documents to search alongside the corpus.
+  matter_id: string | null;
 }
 
 export interface SubQuery {
@@ -50,11 +52,49 @@ export interface Citation {
   decision_date: string | null;
   year: number | null;
   chunk_index: number | null;
+  // Matter documents only: the page and the box on it the passage sits in.
+  matter_id: string | null;
+  page: number | null;
+  bbox: [number, number, number, number] | null;
+  page_width: number | null;
+  page_height: number | null;
   text: string;
   parent_text: string;
   relevance_score: number | null;
   // Why the citation graph added this passage: "cites X", "applies section N of Y".
   via: string | null;
+}
+
+export type DocumentKind = "pdf" | "docx" | "text";
+export type DocumentStatus = "queued" | "running" | "indexed" | "failed";
+
+export interface DocumentProfile {
+  summary: string;
+  document_type: string;
+  parties: string[];
+  dates: string[];
+}
+
+export interface MatterDocument {
+  doc_id: string;
+  name: string;
+  kind: DocumentKind;
+  bytes: number;
+  status: DocumentStatus;
+  pages: number | null;
+  chunks: number | null;
+  error: string | null;
+  profile: DocumentProfile | null;
+  profile_error: string | null;
+  added_at: string;
+}
+
+export interface Matter {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  documents: MatterDocument[];
 }
 
 export interface Expansion {

@@ -1,6 +1,6 @@
 "use client";
 
-import { COLLECTION_LABEL, provenance } from "@/lib/format";
+import { sourceLine } from "@/lib/format";
 import type { Citation } from "@/lib/types";
 
 interface Props {
@@ -51,7 +51,7 @@ export function AuthorityList({ citations, activeIndex, onOpen, registerChip, sh
                     {citation.title}
                   </span>
                   <span className="mt-0.5 block font-mono text-xs text-ink-3">
-                    {COLLECTION_LABEL[citation.collection]} · {provenance(citation)}
+                    {sourceLine(citation)}
                   </span>
                   {citation.via && (
                     <span className="mt-0.5 block truncate font-mono text-xs text-ink-2">{citation.via}</span>

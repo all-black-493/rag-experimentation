@@ -197,3 +197,68 @@ the legislation sub-query (chunk 13 is the exact punishment). The cross-encoder 
 200-token child alone, which says "liable upon conviction to imprisonment…" without the
 Act's name or "section 8"; judgments quoting the section carry all three. Candidate fix:
 score title + child. Not measured yet.
+
+---
+
+## 2026-09-20 · Step 3, matters (PR #12, `matters`)
+
+### The matter set
+
+Three fixture documents — a lease (2 pages), a demand letter (1), a witness statement (2);
+23 chunks in all — uploaded to a fresh matter and searched with the **whole corpus in
+scope** (`--scope all`: the user's document competes with 84,429 chunks of law) and with
+**the matter alone** (`--scope matter`). 20 questions; each names its document and the page
+its answer sits on. `page@5` = the right document *and* page among the top five passages.
+Planner off throughout (no working key), so the fallback plan searches every collection.
+
+| run | scope | recall@5 | MRR | nDCG@5 | page@5 |
+|---|---|---|---|---|---|
+| first version | all | 75.0% | 0.700 | 0.713 | 70.0% |
+| + title scored with the passage | all | 85.0% | 0.792 | 0.807 | 85.0% |
+| + title scored with the passage | matter | 85.0% | 0.825 | 0.832 | 85.0% |
+| relevance threshold removed (side container, not shipped) | matter | 100.0% | 0.900 | 0.926 | 100.0% |
+| relevance threshold removed (side container, not shipped) | all | 100.0% | 0.827 | 0.869 | 90.0% |
+| + matter documents exempt from the threshold | all | 100.0% | 0.846 | 0.885 | 95.0% |
+| + matter documents exempt from the threshold | matter | 100.0% | 0.900 | 0.926 | 100.0% |
+| + PDF line wraps joined within a block — **shipped** | all | **100.0%** | **0.871** | **0.903** | **95.0%** |
+| + PDF line wraps joined within a block — **shipped** | matter | **100.0%** | **0.900** | **0.926** | **100.0%** |
+
+**What changed each result:**
+
+- *75% → 85%: the title now goes in front of the passage the cross-encoder scores.* "What
+  is the monthly rent under the lease?" scored the lease's own clause 3.1 at −0.60 and a
+  letter that *mentions* the lease at 4.89: a 200-token child never says which document it
+  is from. This was the gap recorded under Step 2 for the Sexual Offences Act, and it closes
+  there too — the Act's s.8 passages now rank 3–4 for "what is the punishment for
+  defilement under section 8", where before they were absent from the top ten. Golden set
+  unchanged; relationship set P@5 **90% → 94%**. Cost: ~+0.4 s per search (titles are
+  10–40 tokens per pair), 2.3–2.8 s against 2.1–2.3 s.
+- *85% → 100%: the relevance floor.* The three remaining misses — late-rent interest, the
+  yearly rent review, what the demand letter threatens — were in the pool and ranked
+  correctly among the matter's chunks, but every one scored below `0.2`
+  (`RERANK_RELEVANCE_THRESHOLD`) and was dropped; one question returned nothing at all.
+  The cross-encoder's absolute scores for a contract's clauses run low even when its
+  ordering is right. Removing the floor entirely fixes the matter set without touching the
+  golden set, but the floor is what keeps an off-corpus question from being answered from
+  passages that merely look relevant — so it now applies to the corpus only. The user's own
+  documents are in scope because the user put them there.
+- *MRR 0.846 → 0.871: PDF line wraps.* PyMuPDF returns a block's lines separated by `\n`;
+  they are layout, not content, and were breaking phrases ("3rd February\n2024") for BM25
+  and the embedder alike. Joined at extraction.
+
+### Indexing
+
+Three PDFs, 5 pages, 23 chunks: **12 s** from upload to `indexed`, including one profile
+call per document. The profile calls themselves failed — the replacement Anthropic key now
+authenticates but the account has **no credits** (`400 credit balance is too low`), so
+every document records `profile_error` and stays searchable, which is the designed
+behaviour.
+
+### Known gap, for Step 6
+
+`cross-encoder/ms-marco-MiniLM-L-6-v2` scores legal paraphrase poorly in absolute terms: the
+demand letter's "our client will … exercise her right of re-entry, levy distress …" scores
+−3.6 against "what steps does the landlord threaten if the tenant does not comply". The
+ranking survives; the calibration doesn't. A stronger reranker (MiniLM-L-12, bge-reranker-
+base) is the obvious candidate, at 2–10× the per-pair cost — to be measured against the
+three sets and the latency budget, not assumed.

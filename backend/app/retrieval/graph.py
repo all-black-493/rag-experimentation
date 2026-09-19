@@ -21,6 +21,7 @@ from weaviate.client import WeaviateClient
 from app.caching import TTLCache
 from app.config import Settings
 from app.graph.store import Graph
+from app.matters.store import MatterStore
 from app.resilience import CircuitBreaker
 from app.retrieval.answer import decline, generate, verify
 from app.retrieval.catalog import CatalogHolder
@@ -65,6 +66,7 @@ def build_graph(
     rerank_breaker: CircuitBreaker | None = None,
     retrieval_cache: TTLCache | None = None,
     plan_cache: TTLCache | None = None,
+    matters: MatterStore | None = None,
     pairwise: PairwiseReranker | None = None,
 ) -> CompiledStateGraph:
     graph = StateGraph(GraphState)
@@ -78,6 +80,7 @@ def build_graph(
             max_subqueries=settings.planner_max_subqueries,
             enabled=settings.planner_enabled,
             cache=plan_cache,
+            matters=matters,
         ),
     )
     graph.add_node(

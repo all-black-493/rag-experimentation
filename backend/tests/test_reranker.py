@@ -92,3 +92,6 @@ def test_leaders_are_collapsed_for_scoring_only():
     text = "General damages....................Ksh. 120,000/= ______ total ---- ok"
     assert for_scoring(text) == "General damages...Ksh. 120,000/= ___ total --- ok"
     assert for_scoring("s. 26 of the Act... and more") == "s. 26 of the Act... and more"
+    assert for_scoring("3.1 The Tenant shall pay rent", "lease-agreement.pdf") == (
+        "lease-agreement.pdf\n3.1 The Tenant shall pay rent"
+    )

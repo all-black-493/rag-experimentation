@@ -18,6 +18,12 @@ class Citation(TypedDict):
     decision_date: str | None
     year: int | None
     chunk_index: int | None
+    # Matter documents only: the PDF page and the box on it the passage sits in.
+    matter_id: str | None
+    page: int | None
+    bbox: list[float] | None
+    page_width: float | None
+    page_height: float | None
     # The passage that matched, and the window it sits in.
     text: str
     parent_text: str
@@ -39,7 +45,8 @@ def label(document: Document) -> str:
 
     Judgments: "Republic v Chumba [2025] KEMC 94 — Magistrates' Courts, 2025-05-15".
     Acts: "Traffic Act". The Act's section number, when the passage carries one,
-    is in the text itself.
+    is in the text itself. The user's own documents say so, with the page, so
+    the model never mistakes a party's contract for the law.
     """
     metadata = document.metadata
     title = metadata.get("title") or metadata.get("url", "unknown")
@@ -48,6 +55,9 @@ def label(document: Document) -> str:
         decided = _iso(metadata.get("decision_date"))
         detail = ", ".join(part for part in (court, decided) if part)
         return f"{title} — {detail}" if detail else title
+    if metadata.get("collection") == "matter":
+        page = metadata.get("page")
+        return f"{title} — the user's own document" + (f", page {page}" if page else "")
     return title
 
 
@@ -87,6 +97,11 @@ def build_citations(documents: list[Document]) -> list[Citation]:
             decision_date=_iso(doc.metadata.get("decision_date")),
             year=doc.metadata.get("year"),
             chunk_index=doc.metadata.get("chunk_index"),
+            matter_id=doc.metadata.get("matter_id"),
+            page=doc.metadata.get("page"),
+            bbox=doc.metadata.get("bbox"),
+            page_width=doc.metadata.get("page_width"),
+            page_height=doc.metadata.get("page_height"),
             text=doc.page_content,
             parent_text=context_text(doc),
             relevance_score=doc.metadata.get("relevance_score"),

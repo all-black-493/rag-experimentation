@@ -22,6 +22,7 @@ def hybrid_search(
     fusion: HybridFusion,
     limit: int,
     filters: Filter | None = None,
+    tenant: str | None = None,
 ) -> list[Document]:
     """BM25 + vector search, fused by Weaviate, filtered before ranking.
 
@@ -29,8 +30,11 @@ def hybrid_search(
     embedder - and so one embedding of a sub-query serves every collection it is
     sent to. Filters are pushed into the query: applied before ranking, a narrow
     filter still fills the whole candidate pool instead of leaving three survivors.
+    `tenant` is the matter for the matter collection; the corpus has none.
     """
     handle = client.collections.use(CLASS_NAMES[collection])
+    if tenant is not None:
+        handle = handle.with_tenant(tenant)
     response = handle.query.hybrid(
         query,
         vector=vector,
