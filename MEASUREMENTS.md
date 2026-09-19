@@ -288,3 +288,40 @@ What to measure once credits are back, in this order:
 
 Also in this PR: a stale `matter_id` on `/query` now returns 404 instead of failing inside
 retrieval — the check written for Step 3 had not made it into that commit.
+
+
+---
+
+## 2026-09-20 · Step 5, case analysis (PR #14, `case-analysis`)
+
+### The deterministic core, `authorities_benchmark.py`
+
+Over the three matter fixtures (a lease, a demand letter, a witness statement), the
+citations the documents make, per `golden_authorities.jsonl`:
+
+| what | value |
+|---|---|
+| citations found | 3 / 3 (Companies Act, Distress for Rent Act, Civil Suit E312 of 2025) |
+| spurious | 0 |
+| resolved against the corpus when it holds the Act | 2 / 2 (Companies Act, Distress for Rent Act) |
+| left unresolved when it doesn't | 1 / 1 (the suit itself) |
+| anchored to a passage with a page and box | 3 / 3 |
+| judgments in the corpus applying each, from the citation graph | Companies Act 18, Distress for Rent Act 1 |
+| wall clock, upload to stored analysis | 7.1 s, including three model calls that failed in ~2 s each |
+
+**What made the number:** the graph's extractor took only `section N of the X Act`; a letter
+cites "the Distress for Rent Act" and a lease "the Companies Act, 2015" with no section, so
+both were missed. A bare-Act pattern now runs *on request only* — in a judgment every
+mention of the Penal Code would become an edge, and the Step 2 numbers would move.
+
+### Unmeasured — the model steps
+
+Parties, facts, events, issues, contradictions, research questions and the report are model
+calls (`400 credit balance is too low`). The analysis degrades as designed: authorities and
+chronology stand, the unread documents are named with the reason, the report is absent.
+
+What to measure once credits are back: on the fixtures, parties recall (there are 6 named
+roles), facts anchored to the right page (the golden matter set's 20 answers double as
+facts), the chronology's dates (11 dated events across the three documents), and whether the
+one genuine contradiction — the letter's "no rent received for May–August" against the
+statement's "KSh 513,600 held in escrow since 5 August" — is found and cited to both sides.

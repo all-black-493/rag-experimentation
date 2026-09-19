@@ -119,12 +119,93 @@ export interface WorkflowAccepted {
   question: string;
 }
 
+// --- case analysis: what a matter's documents say, every item pointing at its passage ---
+
+export interface Party {
+  name: string;
+  role: string;
+  source: number | null;
+}
+
+export interface Fact {
+  statement: string;
+  source: number | null;
+}
+
+export interface Event {
+  date: string | null;
+  when: string;
+  description: string;
+  source: number | null;
+}
+
+export interface Issue {
+  question: string;
+  sources: number[];
+}
+
+export interface Authority {
+  ref: string;
+  kind: "case" | "statute";
+  key: string;
+  provision: string | null;
+  doc_id: string | null;
+  title: string | null;
+  url: string | null;
+  applied_by: number;
+  sources: number[];
+}
+
+export interface Contradiction {
+  point: string;
+  first: string;
+  second: string;
+  sources: number[];
+}
+
+export interface ResearchQuestion {
+  question: string;
+  why: string;
+}
+
+export interface CaseAnalysis {
+  matter_id: string;
+  created_at: string;
+  parties: Party[];
+  issues: Issue[];
+  facts: Fact[];
+  chronology: Event[];
+  authorities: Authority[];
+  contradictions: Contradiction[];
+  research_questions: ResearchQuestion[];
+  report: string | null;
+  warnings: string[];
+  sources: Citation[];
+}
+
+export type StepStatus = "started" | "progress" | "done" | "failed" | "skipped";
+
+// Events of a case-analysis run, in the order the steps land.
+export type AnalysisEvent =
+  | { event: "step"; data: { name: string; status: StepStatus; count?: number; document?: string; detail?: string } }
+  | { event: "authorities"; data: { authorities: Authority[] } }
+  | { event: "parties"; data: { parties: Party[] } }
+  | { event: "facts"; data: { facts: Fact[] } }
+  | { event: "chronology"; data: { chronology: Event[] } }
+  | { event: "issues"; data: { issues: Issue[] } }
+  | { event: "contradictions"; data: { contradictions: Contradiction[] } }
+  | { event: "questions"; data: { questions: ResearchQuestion[] } }
+  | { event: "report"; data: { report: string } }
+  | { event: "done"; data: CaseAnalysis }
+  | { event: "error"; data: { detail: string } };
+
 export interface Matter {
   id: string;
   name: string;
   created_at: string;
   updated_at: string;
   documents: MatterDocument[];
+  analysis: CaseAnalysis | null;
 }
 
 export interface Expansion {

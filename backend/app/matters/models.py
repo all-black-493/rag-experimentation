@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.analysis.models import CaseAnalysis
+
 DocumentKind = Literal["pdf", "docx", "text"]
 # queued/running: the ingest job hasn't finished. indexed: searchable.
 DocumentStatus = Literal["queued", "running", "indexed", "failed"]
@@ -52,6 +54,8 @@ class Matter(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     documents: list[MatterDocument] = Field(default_factory=list)
+    # The last case analysis run over the documents, if one has been.
+    analysis: CaseAnalysis | None = None
 
     def document(self, doc_id: str) -> MatterDocument | None:
         return next((d for d in self.documents if d.doc_id == doc_id), None)

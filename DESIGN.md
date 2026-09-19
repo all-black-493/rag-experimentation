@@ -92,6 +92,14 @@ or beside the page, never at the end of it.
   provisions, a link-out glyph when the document is in the corpus. Folded at
   20 rows behind a mono count. Nothing renders when the graph has no record;
   no empty-state copy.
+- **Working file** (`CaseAnalysisView`): the matter's case analysis in the
+  desk's own vocabulary — section labels in mono small caps with a count,
+  rows on hairlines (serif item, mono detail, a citation chip at the row's
+  end), the chronology with its dates in a mono column, authorities linked
+  out when the corpus holds them, research questions as rows that start a
+  research run. Sections appear as their step lands, a skeleton holding the
+  place; a step that could not run is a mono line in its own words. The
+  report, when there is one, is set by `Prose` like a memo.
 - **Page** (`PdfPage`): for a citation to the user's own PDF, the cited page
   rendered in the bundle at the column's width, white on the sheet with a
   hairline, the highlighter swept over the box the passage came from

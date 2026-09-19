@@ -1,12 +1,9 @@
 "use client";
 
-import { Fragment, type ReactNode } from "react";
-import { splitMarkers } from "@/lib/format";
-import { blocks, type Inline } from "@/lib/markdown";
 import type { Phase } from "@/lib/useResearch";
 import type { Citation, QueryResponse } from "@/lib/types";
-import { CitationChip } from "./CitationChip";
 import { AuthorityList } from "./AuthorityList";
+import { Prose } from "./Prose";
 
 interface Props {
   phase: Phase;
@@ -43,54 +40,16 @@ export function AnswerView({ phase, draft, result, citations, activeIndex, onOpe
     );
   }
 
-  const renderInline = (inline: Inline, key: number): ReactNode => {
-    const parts = splitMarkers(inline.text).map((part, i) =>
-      "marker" in part ? (
-        <CitationChip
-          key={`${key}-${i}`}
-          ref={(el) => registerChip(part.marker, el)}
-          index={part.marker}
-          exists={part.marker >= 1 && part.marker <= citations.length}
-          active={activeIndex === part.marker}
-          onOpen={onOpen}
-        />
-      ) : (
-        <Fragment key={`${key}-${i}`}>{part.text}</Fragment>
-      ),
-    );
-    if (inline.kind === "strong") return <strong key={key} className="font-semibold">{parts}</strong>;
-    if (inline.kind === "em") return <em key={key}>{parts}</em>;
-    return <Fragment key={key}>{parts}</Fragment>;
-  };
-
   return (
     <div>
-      <div className="prose-law" aria-busy={streaming}>
-        {blocks(text).map((block, i) =>
-          block.kind === "heading" ? (
-            <h2 key={i} className="mt-7 mb-2 font-mono text-xs uppercase tracking-[0.08em] text-ink-3 first:mt-0">
-              {block.text}
-            </h2>
-          ) : block.kind === "paragraph" ? (
-            <p key={i}>{block.inlines.map(renderInline)}</p>
-          ) : block.ordered ? (
-            <ol key={i} className="mt-3 list-decimal space-y-1.5 pl-6 marker:font-mono marker:text-sm marker:text-ink-3">
-              {block.items.map((item, j) => (
-                <li key={j}>{item.map(renderInline)}</li>
-              ))}
-            </ol>
-          ) : (
-            <ul key={i} className="mt-3 list-disc space-y-1.5 pl-6 marker:text-ink-3">
-              {block.items.map((item, j) => (
-                <li key={j}>{item.map(renderInline)}</li>
-              ))}
-            </ul>
-          ),
-        )}
-        {streaming && (
-          <span className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[0.2em] bg-red motion-safe:animate-pulse" aria-hidden="true" />
-        )}
-      </div>
+      <Prose
+        text={text}
+        sourceCount={citations.length}
+        activeIndex={activeIndex}
+        onOpen={onOpen}
+        registerChip={registerChip}
+        streaming={streaming}
+      />
 
       {citations.length > 0 && (
         <AuthorityList citations={citations} activeIndex={activeIndex} onOpen={onOpen} registerChip={registerChip} />

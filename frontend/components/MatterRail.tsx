@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Plus, X } from "lucide-react";
+import { ChevronDown, FileSearch, Plus, X } from "lucide-react";
 import { useRef, useState } from "react";
 import type { Matter, MatterDocument } from "@/lib/types";
 
@@ -12,6 +12,10 @@ interface Props {
   onCreate: (name: string) => Promise<unknown>;
   onUpload: (files: FileList) => void;
   onRemove: (docId: string) => void;
+  // The case analysis: start one, or open the one the matter has.
+  analysing: boolean;
+  onAnalyse: () => void;
+  onOpenAnalysis: () => void;
 }
 
 const ACCEPT = ".pdf,.docx,.txt,.md";
@@ -21,7 +25,19 @@ const ACCEPT = ".pdf,.docx,.txt,.md";
  * per document with what the index knows about it, and the way to add more.
  * Everything shown is a fact about the matter; nothing explains itself.
  */
-export function MatterRail({ matters, current, error, onSelect, onCreate, onUpload, onRemove }: Props) {
+export function MatterRail({
+  matters,
+  current,
+  error,
+  onSelect,
+  onCreate,
+  onUpload,
+  onRemove,
+  analysing,
+  onAnalyse,
+  onOpenAnalysis,
+}: Props) {
+  const indexed = current?.documents.filter((d) => d.status === "indexed").length ?? 0;
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -149,14 +165,39 @@ export function MatterRail({ matters, current, error, onSelect, onCreate, onUplo
               event.target.value = "";
             }}
           />
-          <button
-            type="button"
-            onClick={() => fileInput.current?.click()}
-            className="inline-flex min-h-9 items-center gap-2 self-start rounded-control border border-rule-2 px-3 text-sm text-ink-2 transition-colors duration-150 hover:border-ink-3 hover:text-ink"
-          >
-            <Plus size={15} aria-hidden="true" />
-            Add documents
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => fileInput.current?.click()}
+              className="inline-flex min-h-9 items-center gap-2 rounded-control border border-rule-2 px-3 text-sm text-ink-2 transition-colors duration-150 hover:border-ink-3 hover:text-ink"
+            >
+              <Plus size={15} aria-hidden="true" />
+              Add documents
+            </button>
+            {indexed > 0 && (
+              <button
+                type="button"
+                onClick={onAnalyse}
+                disabled={analysing}
+                className="inline-flex min-h-9 items-center gap-2 rounded-control border border-rule-2 px-3 text-sm text-ink-2 transition-colors duration-150 hover:border-ink-3 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <FileSearch size={15} aria-hidden="true" />
+                {analysing ? "Analysing" : "Analyse"}
+              </button>
+            )}
+          </div>
+          {current.analysis && !analysing && (
+            <button
+              type="button"
+              onClick={onOpenAnalysis}
+              className="self-start text-left font-serif text-[0.95rem] text-ink underline-offset-2 hover:text-red hover:underline"
+            >
+              Case analysis
+              <span className="ml-2 font-mono text-xs text-ink-3">
+                {new Date(current.analysis.created_at).toLocaleDateString("en-KE", { day: "numeric", month: "short" })}
+              </span>
+            </button>
+          )}
         </>
       )}
 

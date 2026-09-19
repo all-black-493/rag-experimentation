@@ -4,10 +4,12 @@ import { SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchCatalog } from "@/lib/api";
 import type { Catalog, Mode, QueryFilters } from "@/lib/types";
+import { useAnalysis } from "@/lib/useAnalysis";
 import { useMatter } from "@/lib/useMatter";
 import { useResearch } from "@/lib/useResearch";
 import { AnswerView } from "./AnswerView";
 import { AuthorityList } from "./AuthorityList";
+import { CaseAnalysisView } from "./CaseAnalysisView";
 import { EmptyState } from "./EmptyState";
 import { FilterRail } from "./FilterRail";
 import { Header } from "./Header";
@@ -35,7 +37,13 @@ export function Workspace() {
   const lastOpener = useRef<HTMLButtonElement | null>(null);
   const { state, submit, cancel } = useResearch();
   const matter = useMatter();
-  const matterId = matter.current?.id ?? null;
+  const current = matter.current;
+  const matterId = current?.id ?? null;
+  const analysis = useAnalysis();
+  const { start: startAnalysis, show: showAnalysis } = analysis;
+  const refreshMatter = matter.refresh;
+  // The page shows a query's result or the matter's working file, never both.
+  const [view, setView] = useState<"desk" | "analysis">("desk");
 
   useEffect(() => {
     fetchCatalog().then(setCatalog).catch((e: Error) => setCatalogError(e.message));
@@ -56,9 +64,37 @@ export function Workspace() {
   const ask = useCallback(
     (text: string) => {
       setOpenIndex(null);
+      setView("desk");
       submit(text, mode, filters, matterId);
     },
     [submit, mode, filters, matterId],
+  );
+
+  const analyse = useCallback(() => {
+    if (!matterId) return;
+    setOpenIndex(null);
+    setView("analysis");
+    startAnalysis(matterId).then(refreshMatter);
+  }, [matterId, startAnalysis, refreshMatter]);
+
+  const stored = current?.analysis ?? null;
+  const openAnalysis = useCallback(() => {
+    if (!stored) return;
+    setOpenIndex(null);
+    setView("analysis");
+    showAnalysis(stored);
+  }, [stored, showAnalysis]);
+
+  // A research question from the working file goes straight to the desk.
+  const research = useCallback(
+    (text: string) => {
+      setMode("research");
+      setQuestion(text);
+      setOpenIndex(null);
+      setView("desk");
+      submit(text, "research", filters, matterId);
+    },
+    [submit, filters, matterId],
   );
 
   const registerChip = useCallback((index: number, el: HTMLButtonElement | null) => {
@@ -85,7 +121,9 @@ export function Workspace() {
     return () => window.removeEventListener("keydown", onKey);
   }, [railOpen]);
 
-  const bundleOpen = openIndex !== null && state.citations.some((c) => c.index === openIndex);
+  // What the bundle opens onto: a query's citations, or the working file's passages.
+  const citations = view === "analysis" ? (analysis.state.analysis?.sources ?? []) : state.citations;
+  const bundleOpen = openIndex !== null && citations.some((c) => c.index === openIndex);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -143,6 +181,9 @@ export function Workspace() {
               onCreate={matter.create}
               onUpload={matter.upload}
               onRemove={matter.remove}
+              analysing={analysis.state.phase === "running"}
+              onAnalyse={analyse}
+              onOpenAnalysis={openAnalysis}
             />
           </div>
           <h2 className="px-5 pt-8 font-mono text-xs uppercase tracking-[0.08em] text-ink-3">
@@ -195,7 +236,16 @@ export function Workspace() {
             </div>
 
             <div className="mt-6">
-              {state.error ? (
+              {view === "analysis" && matter.current ? (
+                <CaseAnalysisView
+                  matterName={matter.current.name}
+                  state={analysis.state}
+                  activeIndex={bundleOpen ? openIndex : null}
+                  onOpen={openAuthority}
+                  registerChip={registerChip}
+                  onResearch={research}
+                />
+              ) : state.error ? (
                 <p className="max-w-[60ch] border-l border-rule-2 pl-4 text-ink-2">
                   The query failed: {state.error}. Try again in a moment.
                 </p>
@@ -240,7 +290,7 @@ export function Workspace() {
 
         {bundleOpen && openIndex !== null && (
           <SourcePanel
-            citations={state.citations}
+            citations={citations}
             index={openIndex}
             onNavigate={setOpenIndex}
             onClose={closeAuthority}

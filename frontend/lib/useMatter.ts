@@ -93,6 +93,10 @@ export function useMatter() {
     [currentId, replace],
   );
 
+  const refresh = useCallback(() => {
+    if (currentId) fetchMatter(currentId).then(replace).catch(() => undefined);
+  }, [currentId, replace]);
+
   const remove = useCallback(
     async (docId: string) => {
       if (!currentId) return;
@@ -102,5 +106,5 @@ export function useMatter() {
     [currentId, replace],
   );
 
-  return { matters, current, pending, error, select, create, upload, remove };
+  return { matters, current, pending, error, select, create, upload, remove, refresh };
 }

@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.analysis.models import CaseAnalysis  # noqa: F401 - on the matter, and a run's `done`
 from app.matters.models import (  # noqa: F401 - re-exported as the /matters responses
     DocumentProfile,
     Matter,
@@ -91,6 +92,10 @@ class Citation(BaseModel):
     parent_text: str
     relevance_score: float | None = None
     via: str | None = None
+
+
+class CaseAnalysisRequest(BaseModel):
+    matter_id: str = Field(pattern=r"^[0-9a-f]{12}$")
 
 
 class WorkflowAccepted(BaseModel):

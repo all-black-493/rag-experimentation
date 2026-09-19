@@ -1,5 +1,6 @@
 import { readEvents } from "./stream";
 import type {
+  AnalysisEvent,
   Catalog,
   GraphNeighbourhood,
   Matter,
@@ -90,6 +91,26 @@ export async function* followRun(jobId: string, signal: AbortSignal): AsyncGener
   });
   if (!response.ok) throw await failure(response);
   yield* readEvents(response, signal);
+}
+
+/** Read a matter's documents into a working file; followed like any run. */
+export async function startCaseAnalysis(matterId: string): Promise<WorkflowAccepted> {
+  const response = await fetch("/api/workflows/case-analysis", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ matter_id: matterId }),
+  });
+  if (!response.ok) throw await failure(response);
+  return response.json();
+}
+
+export async function* followAnalysis(
+  jobId: string,
+  signal: AbortSignal,
+): AsyncGenerator<AnalysisEvent> {
+  for await (const event of followRun(jobId, signal)) {
+    yield event as unknown as AnalysisEvent;
+  }
 }
 
 export async function* streamQuery(

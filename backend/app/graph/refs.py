@@ -50,6 +50,16 @@ _STATUTE = re.compile(
     r"(?:Act|Code|Rules|Regulations|Order))"
 )
 
+# An Act named without a section - "under the Distress for Rent Act", "the
+# Companies Act, 2015". How a letter or a contract cites law; too loose for the
+# corpus graph, where every judgment names the Penal Code a dozen times, so it
+# is extracted only on request.
+_BARE_ACT = re.compile(
+    r"(?:the|The|under|Under)\s+"
+    r"(?P<title>[A-Z][A-Za-z’'&\-]*(?:\s+(?:of|and|the|for|on|[A-Z][A-Za-z’'&\-]*))*?\s"
+    r"(?:Act|Code)(?:,?\s*(?:19|20)\d\d)?)(?![A-Za-z])"
+)
+
 _ARTICLE = re.compile(
     r"[Aa]rticle\s+(?P<provision>\d+[A-Z]?(?:\s*\(\d+\))?(?:\s*\([a-z]\))?)\s+of\s+the\s+Constitution"
 )
@@ -111,8 +121,12 @@ def case_number_key(kind: str, number: str, year: str) -> str:
     return f"{kind} {number.upper()} of {year}"
 
 
-def extract_references(text: str) -> list[Reference]:
-    """Every citation in the text, in order of appearance, de-duplicated."""
+def extract_references(text: str, *, bare_acts: bool = False) -> list[Reference]:
+    """Every citation in the text, in order of appearance, de-duplicated.
+
+    `bare_acts` also takes an Act named without a section, which a letter or
+    a contract does and a judgment does too often to be useful.
+    """
     text = text.replace("\xa0", " ")
     found: list[Reference] = []
 
@@ -150,6 +164,12 @@ def extract_references(text: str) -> list[Reference]:
                 provision=re.sub(r"\s+", "", m["provision"]),
             )
         )
+    if bare_acts:
+        for m in _BARE_ACT.finditer(text):
+            title = normalise_title(m["title"])
+            if title in {r.key for r in found if r.kind == "statute"}:
+                continue
+            found.append(Reference("statute", m["title"].strip(), title))
     for m in _ARTICLE.finditer(text):
         provision = re.sub(r"\s+", "", m["provision"])
         found.append(

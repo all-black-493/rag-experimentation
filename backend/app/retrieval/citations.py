@@ -1,7 +1,7 @@
 from datetime import date, datetime
-from typing import TypedDict
 
 from langchain_core.documents import Document
+from typing_extensions import TypedDict
 
 from app.metadata import Collection
 

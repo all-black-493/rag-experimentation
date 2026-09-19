@@ -196,12 +196,33 @@ year_from, year_to}, matter_id?}` → `{plan, retrieval, citations, answer?, gro
 corpus contains, for the UI's filters. `GET /graph/{doc_id}` — what a document cites and
 what cites it.
 
-Research runs as a workflow, because it takes long enough to watch: `POST /workflows/research`
+Two workflows run as jobs, because they take long enough to watch. Research: `POST /workflows/research`
 (the same body as a query) returns a job at once; `GET /workflows/{job_id}/events` streams the
 same events a query does, plus `review` after each pass, replayed from the start for a client
-that connects late; `GET /workflows/{job_id}` is the job's status. `app/workflows/` owns no
-retrieval: a workflow composes the graph. Rate-limited per client; `PROXY_SECRET` gates
+that connects late; `GET /workflows/{job_id}` is the job's status. Case analysis:
+`POST /workflows/case-analysis {matter_id}` reads a matter's documents into a working file
+(below), section by section. `app/workflows/` owns no retrieval or analysis logic: a workflow
+composes the graph, or `app/analysis/`. Rate-limited per client; `PROXY_SECRET` gates
 everything but `/health` when set.
+
+## Case analysis
+
+What a matter's documents say, before any law is researched: the parties, the facts each
+document asserts, the events in date order, the Acts and cases the documents cite, where the
+documents contradict each other, and what to look up next — every item pointing at the
+passage it was read from, so a click opens the page with the words highlighted.
+
+The order is deliberate. The deterministic steps run first: the **authorities** are found by
+the citation graph's own extractor (plus an Act named without a section, which a letter does
+and a judgment does too often), resolved against the corpus by the same rules the graph uses,
+and each carries how many judgments in the corpus have applied it. The **chronology** is
+parsed from dates as documents write them. Only then do the model steps run — one call per
+document for parties, facts, events and issues (the model gives page numbers; the passage is
+found by word overlap on that page, so anchors are real chunks with real boxes), one call
+across the documents for issues, contradictions and research questions, one for the report.
+A model step that fails is recorded on the analysis in its own words and the rest stands. The
+result is stored on the matter; a research question in it is one click from a research run.
+
 
 ## Frontend
 
@@ -250,6 +271,9 @@ generations link to the version that produced them.
   graph by `build_relationship_questions.py`.
 - `golden_matter.jsonl` + `fixtures/matter/` — 20 questions over one matter's three
   documents, authored as Markdown and rendered to PDF by `build_matter_fixtures.py`.
+- `authorities_benchmark.py` + `golden_authorities.jsonl` — the case analysis's
+  deterministic step over the same fixtures: every citation found, resolved when the corpus
+  holds it, anchored to a passage.
 
 `.github/workflows/eval.yml` runs unit tests, ingests the slice, runs both, on every PR.
 
@@ -262,13 +286,16 @@ backend/app/
   graph/        refs (extraction), resolve, edges, store (Weaviate + in-memory), build CLI
   matters/      models, store (disk), pdf (blocks → page + box), loaders, chunking,
                 ingest (the job), enrich (profile), delete, catalog (for the planner)
+  analysis/     models, chunks, sources (anchors), authorities, resolve, chronology,
+                extract (per document), synthesise (across them, and the report), run
   retrieval/    catalog, plan (schema), planner (node), filters, retrieve, expand, rerank,
                 review, answer, grounding, citations, run (one query under one trace), graph
-  workflows/    runs (a job with followable events), research (the graph in research mode)
+  workflows/    runs (a job with followable events), research, case_analysis
   api/          schemas, routes/{query,catalog,graph,matters,workflows}, streaming
   config, main, dependencies, jobs, proxy_auth, rate_limit, caching, resilience, scoring,
   tracing, metrics, prompts, prompt_sync
-backend/prompts/   planner, generation, review, memo, grounding, profile, responses
+backend/prompts/   planner, generation, review, memo, grounding, profile, extract, analysis,
+                   report, responses
 backend/eval/      the harness above
 frontend/          app/ (layout, page, api proxy), components/, lib/ (types, api, stream, hook)
 ```

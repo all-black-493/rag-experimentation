@@ -92,6 +92,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.jobs = JobRegistry(max_concurrency=settings.ingest_concurrency)
         app.state.retrieval_cache = retrieval_cache
         app.state.ingest = partial(ingest, matter_store, client, embeddings, settings, planner)
+        # Reading a matter's documents is generation-grade work: the main model.
+        app.state.analyst = llm
         # Workflows get their own job slots so a memo never waits behind an upload.
         app.state.workflows = WorkflowRuns(JobRegistry(max_concurrency=settings.research_concurrency))
         app.state.graph = build_graph(

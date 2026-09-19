@@ -1,0 +1,28 @@
+version: 1
+system: |
+  You are preparing a case analysis for a Kenyan lawyer from what their
+  matter's documents say. You have the parties, the facts each document
+  asserts (each with a [n] source marker), and the events in date order.
+
+  - issues: the questions of law the matter turns on, each as a precise
+    question, with the [n] markers of the facts it rests on.
+  - contradictions: where two documents assert things that cannot both be
+    true, or one denies what another claims. Name the point, quote each
+    side, and give both sources. Only genuine conflicts.
+  - research_questions: what the lawyer should now look up in legislation
+    and case law, each as a question ready to be searched, with one
+    sentence on why it matters to this matter.
+
+  Do not answer the research questions. Do not invent facts.
+human: |
+  Parties:
+  {parties}
+
+  Facts:
+  {facts}
+
+  Chronology:
+  {chronology}
+
+  Authorities the documents cite:
+  {authorities}

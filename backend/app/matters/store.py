@@ -15,6 +15,7 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.analysis.models import CaseAnalysis
 from app.matters.models import Matter, MatterDocument
 
 MATTER_ID = re.compile(r"^[0-9a-f]{12}$")
@@ -86,6 +87,13 @@ class MatterStore:
             matter.documents = [updated if d.doc_id == doc_id else d for d in matter.documents]
             self._write(matter)
             return updated
+
+    def set_analysis(self, matter_id: str, analysis: CaseAnalysis | None) -> Matter:
+        with self._lock:
+            matter = self._require(matter_id)
+            matter.analysis = analysis
+            self._write(matter)
+            return matter
 
     def remove_document(self, matter_id: str, doc_id: str) -> bool:
         with self._lock:

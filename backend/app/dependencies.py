@@ -2,6 +2,7 @@ from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import Depends, Request
+from langchain_core.language_models import BaseChatModel
 from langgraph.graph.state import CompiledStateGraph
 from weaviate.client import WeaviateClient
 
@@ -51,6 +52,11 @@ def get_workflow_runs(request: Request) -> WorkflowRuns:
     return request.app.state.workflows
 
 
+def get_analyst(request: Request) -> BaseChatModel | None:
+    """The model that reads a matter's documents; None means the deterministic steps only."""
+    return getattr(request.app.state, "analyst", None)
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 GraphDep = Annotated[CompiledStateGraph, Depends(get_graph)]
 CatalogDep = Annotated[Catalog, Depends(get_catalog)]
@@ -61,3 +67,4 @@ JobsDep = Annotated[JobRegistry, Depends(get_jobs)]
 IngestDep = Annotated[Callable[[str, str], int], Depends(get_ingest)]
 RetrievalCacheDep = Annotated[TTLCache, Depends(get_retrieval_cache)]
 WorkflowRunsDep = Annotated[WorkflowRuns, Depends(get_workflow_runs)]
+AnalystDep = Annotated[BaseChatModel | None, Depends(get_analyst)]
