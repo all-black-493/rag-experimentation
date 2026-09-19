@@ -26,6 +26,11 @@ dependencies = [
     # `ragas.metrics.Faithfulness` path instead — deprecated but documented as the
     # escape hatch for exactly this case, and verified working end-to-end.
     "anthropic>=0.108,<1.0",
+    # A local judge, for measuring without a provider bill. The 0.3 line is
+    # the last on langchain-core 0.3; 0.3.6 is where the reasoning switch
+    # landed, without which a thinking model's <think> block breaks ragas's
+    # parse of the verdict.
+    "langchain-ollama>=0.3.6,<0.4",
     "httpx>=0.27",
 ]
 

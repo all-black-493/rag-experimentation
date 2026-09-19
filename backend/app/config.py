@@ -28,12 +28,29 @@ class Settings(BaseSettings):
     # passages do not. Omitting it silently costs retrieval quality.
     local_embedding_query_prefix: str = "Represent this sentence for searching relevant passages: "
 
+    # Who answers. "anthropic" pairs the generation model with the planner
+    # model below; "ollama" runs local models (see app.llm) and costs nothing
+    # per call, which is what lets every step be measured.
+    llm_provider: Literal["anthropic", "ollama"] = "anthropic"
+
     anthropic_api_key: str = ""
     generation_model: str = "claude-sonnet-5"
     # Planning is routing and decomposition, not reasoning: a small fast model
     # does it in a fraction of the time. Measured: the planner was 7s of a 23s
     # request on the generation model.
     planner_model: str = "claude-haiku-4-5-20251001"
+
+    # Ollama. The app talks to the compose service by default; point it at a
+    # host install with OLLAMA_BASE_URL=http://host.docker.internal:11434.
+    ollama_base_url: str = "http://ollama:11434"
+    ollama_model: str = "qwen3:8b"
+    ollama_fast_model: str = "qwen3:8b"
+    ollama_num_ctx: int = 16384
+    ollama_reasoning: bool = False
+    ollama_temperature: float = 0.2
+    # Keep the weights loaded between calls; reloading 5 GB per request is
+    # the difference between seconds and a minute.
+    ollama_keep_alive: str = "30m"
 
     # When set, every request except /health must carry it in X-Proxy-Secret.
     # Set in deployments where the API sits behind a trusted proxy (see

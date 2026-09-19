@@ -4,7 +4,6 @@ from functools import partial
 from pathlib import Path
 
 from fastapi import FastAPI
-from langchain_anthropic import ChatAnthropic
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIASGIMiddleware
@@ -14,6 +13,7 @@ from app.caching import TTLCache, enable_llm_cache
 from app.config import get_settings
 from app.graph.store import ensure_citation_collection, load_graph
 from app.jobs import JobRegistry
+from app.llm import build_chat_model
 from app.matters.ingest import ingest
 from app.matters.store import MatterStore
 from app.proxy_auth import require_proxy_secret
@@ -50,18 +50,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if settings.pairwise_rerank_enabled
         else None
     )
-    llm = ChatAnthropic(
-        model=settings.generation_model,
-        anthropic_api_key=settings.anthropic_api_key,
-        timeout=settings.external_timeout_seconds,
-        max_retries=settings.external_max_retries,
-    )
-    planner = ChatAnthropic(
-        model=settings.planner_model,
-        anthropic_api_key=settings.anthropic_api_key,
-        timeout=settings.external_timeout_seconds,
-        max_retries=settings.external_max_retries,
-    )
+    llm = build_chat_model(settings, "generation")
+    planner = build_chat_model(settings, "fast")
     # Same model, no cache: a cached verdict would pin one sampled judgment on
     # one answer forever, which is how a good answer was declined every time.
     verifier = llm.model_copy(update={"cache": False})
@@ -134,7 +124,13 @@ app.include_router(workflows.router)
 @app.get("/health")
 @limiter.exempt
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    """Alive, and which models answer: an eval report records this beside its numbers."""
+    settings = get_settings()
+    if settings.llm_provider == "ollama":
+        models = f"{settings.ollama_model} / {settings.ollama_fast_model}"
+    else:
+        models = f"{settings.generation_model} / {settings.planner_model}"
+    return {"status": "ok", "provider": settings.llm_provider, "models": models}
 
 
 # Registered last so it runs first: nothing above is reachable without the

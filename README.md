@@ -34,6 +34,27 @@ docker compose restart app                 # catalog and graph are loaded at sta
 cd frontend && cp .env.example .env.local && npm install && npm run dev   # :3000
 ```
 
+### Local models
+
+Every model call can go to Ollama instead of Anthropic, so measuring costs nothing:
+
+```bash
+LLM_PROVIDER=ollama docker compose --profile ollama up -d      # adds the ollama service
+docker compose exec ollama ollama pull qwen3:8b                 # ~5 GB, once
+```
+
+`OLLAMA_MODEL` (answers, memos, reports, the verifier) and `OLLAMA_FAST_MODEL` (planner,
+review, profiles, extraction) default to `qwen3:8b`; a machine with the memory can run
+`qwen3:14b` or `qwen3:30b` for the first. Thinking is off (`OLLAMA_REASONING`) — every
+structured call is JSON, not reasoning, and on a CPU thinking doubles the time. The context
+window is 16k (`OLLAMA_NUM_CTX`): a memo prompt carries twelve parent windows. An NVIDIA GPU
+needs the device reservation commented in `docker-compose.yml`; a host install instead of
+the service is `OLLAMA_BASE_URL=http://host.docker.internal:11434`. The eval harness's judge
+can be local too: `run_eval.py --judge-model ollama:qwen3:8b`.
+
+One factory, `app/llm.py`, builds both roles for either provider; nothing downstream knows
+which it has.
+
 Ingest is idempotent per document and resumable; a document left half-indexed by an
 interrupted run is redone. Embedding is CPU-bound (~8 chunks/s here): the full corpus is
 ~85k chunks, so the first ingest takes a couple of hours; re-runs come from the embedding

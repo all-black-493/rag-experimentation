@@ -38,6 +38,15 @@ services:
       PLANNER_ENABLED: ${PLANNER_ENABLED:-true}
       GRAPH_EXPANSION_ENABLED: ${GRAPH_EXPANSION_ENABLED:-true}
       RERANK_WITH_TITLE: ${RERANK_WITH_TITLE:-true}
+      # Local models: LLM_PROVIDER=ollama docker compose --profile ollama up -d
+      # then `docker compose exec ollama ollama pull qwen3:8b`. A host install
+      # instead of the service: OLLAMA_BASE_URL=http://host.docker.internal:11434.
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      OLLAMA_FAST_MODEL: ${OLLAMA_FAST_MODEL:-qwen3:8b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # The embedding cache has to outlive the container or it isn't a cache:
       # without this every `up --build` re-embeds the whole corpus.
@@ -52,7 +61,27 @@ services:
         condition: service_healthy
     restart: on-failure
 
+  # Local models, opt in: --profile ollama. CPU by default; for an NVIDIA GPU
+  # add the device reservation below and install the NVIDIA Container Toolkit
+  # (https://github.com/ollama/ollama/blob/main/docs/docker.mdx).
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  ollama:
+    image: ollama/ollama
+    profiles: ["ollama"]
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
 volumes:
   weaviate_data:
   matter_data:
   embedding_cache:
+  ollama_data:

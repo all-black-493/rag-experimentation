@@ -164,18 +164,39 @@ async def score_sample(
     return result
 
 
-async def run(args: argparse.Namespace) -> Report:
-    dataset = load_dataset(args.dataset)
+def build_judge(args: argparse.Namespace):
+    """The faithfulness judge: Claude by default, or a local Ollama model.
 
+    `--judge-model ollama:qwen3:8b` reads the local model; the same judge
+    must be used across the runs being compared, since a judge is part of
+    the instrument.
+    """
+    if args.judge_model.startswith("ollama:"):
+        from langchain_ollama import ChatOllama
+
+        return ChatOllama(
+            model=args.judge_model.removeprefix("ollama:"),
+            base_url=args.ollama_base_url,
+            num_ctx=16384,
+            num_predict=JUDGE_MAX_TOKENS,
+            reasoning=False,
+        )
+    if not args.anthropic_api_key:
+        raise SystemExit("--anthropic-api-key is required for a Claude judge")
     # ChatAnthropic defaults to max_tokens=1024, which ragas's faithfulness judge
     # overruns on longer answers — it then reports "The LLM generation was not
     # completed" and the sample goes unscored.
-    llm = ChatAnthropic(
+    return ChatAnthropic(
         model=args.judge_model,
         anthropic_api_key=args.anthropic_api_key,
         max_tokens=JUDGE_MAX_TOKENS,
     )
-    judge = LangchainLLMWrapper(llm, bypass_temperature=True)
+
+
+async def run(args: argparse.Namespace) -> Report:
+    dataset = load_dataset(args.dataset)
+
+    judge = LangchainLLMWrapper(build_judge(args), bypass_temperature=True)
     faithfulness = Faithfulness(llm=judge)
 
     async with httpx.AsyncClient(base_url=args.api_url, timeout=180.0) as client:
@@ -271,8 +292,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-url", default="http://localhost:8010")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
-    parser.add_argument("--judge-model", default="claude-sonnet-5")
-    parser.add_argument("--anthropic-api-key", required=True)
+    parser.add_argument(
+        "--judge-model",
+        default="claude-sonnet-5",
+        help="a Claude model id, or ollama:<model> for a local judge",
+    )
+    parser.add_argument("--anthropic-api-key", default="")
+    parser.add_argument("--ollama-base-url", default="http://localhost:11435")
     parser.add_argument("--faithfulness-threshold", type=float, default=0.8)
     parser.add_argument("--min-answer-rate", type=float, default=0.9)
     parser.add_argument("--min-citation-coverage", type=float, default=0.8)
