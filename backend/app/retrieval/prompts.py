@@ -2,3 +2,5 @@ from app.prompts import load_chat_prompt
 
 PLANNER_PROMPT = load_chat_prompt("planner")
 GENERATION_PROMPT = load_chat_prompt("generation")
+REVIEW_PROMPT = load_chat_prompt("review")
+MEMO_PROMPT = load_chat_prompt("memo")

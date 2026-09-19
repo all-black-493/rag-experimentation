@@ -19,6 +19,13 @@ interface Props {
  * The query slip. Sits at the top of the working page, not the bottom: this
  * is a research desk, and the question is what the page is about.
  */
+const PLACEHOLDER: Record<Mode, string> = {
+  ask: "What does the Employment Act say about severance pay?",
+  research: "Is a probationary employee entitled to notice on termination?",
+  search: "Find passages on robbery with violence under section 296(2)",
+};
+const ACTION: Record<Mode, string> = { ask: "Ask", research: "Research", search: "Search" };
+
 export function QueryComposer({ value, onChange, mode, onModeChange, busy, onSubmit, onCancel }: Props) {
   const question = value;
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -61,11 +68,7 @@ export function QueryComposer({ value, onChange, mode, onModeChange, busy, onSub
             submit();
           }
         }}
-        placeholder={
-          mode === "ask"
-            ? "What does the Employment Act say about severance pay?"
-            : "Find passages on robbery with violence under section 296(2)"
-        }
+        placeholder={PLACEHOLDER[mode]}
         className="block w-full resize-none bg-transparent px-4 pt-4 pb-2 font-serif text-read leading-relaxed placeholder:text-ink-3 focus:outline-none"
       />
       <div className="flex items-center justify-between gap-3 px-3 pb-3">
@@ -85,7 +88,7 @@ export function QueryComposer({ value, onChange, mode, onModeChange, busy, onSub
             disabled={!question.trim()}
             className="inline-flex min-h-9 items-center gap-2 rounded-control bg-red px-3.5 text-sm font-medium text-sheet transition-colors duration-150 hover:bg-red-2 disabled:cursor-not-allowed disabled:bg-rule-2 disabled:text-ink-3"
           >
-            {mode === "ask" ? "Ask" : "Search"}
+            {ACTION[mode]}
             <ArrowUp size={15} strokeWidth={2.25} aria-hidden="true" />
           </button>
         )}

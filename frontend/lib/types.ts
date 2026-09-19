@@ -1,7 +1,9 @@
 // Mirrors backend/app/api/schemas.py. Change both or neither.
 
 export type Collection = "legislation" | "case_law" | "matter";
-export type Mode = "search" | "ask";
+// search: ranked passages. ask: one pass, a cited answer. research: the pass
+// is reviewed for what it missed, searched again, and written up as a memo.
+export type Mode = "search" | "ask" | "research";
 
 export interface QueryFilters {
   collections: Collection[];
@@ -39,6 +41,28 @@ export interface SubQueryOutcome {
   filters: { courts?: string[]; year_from?: number; year_to?: number };
   retrieved: number;
   relaxed: boolean;
+  // Which pass ran it: 1 for the plan, 2 for a review's follow-ups.
+  round: number;
+}
+
+export interface FollowUp {
+  query: string;
+  collection: Collection;
+  reason: string;
+}
+
+// What a research pass's review found missing, and what it searched for next.
+export interface ReviewOutcome {
+  round: number;
+  missing: string;
+  follow_ups: FollowUp[];
+}
+
+export interface ReviewEvent {
+  round: number;
+  missing: string | null;
+  follow_ups: FollowUp[];
+  another_pass: boolean;
 }
 
 export interface Citation {
@@ -89,6 +113,12 @@ export interface MatterDocument {
   added_at: string;
 }
 
+export interface WorkflowAccepted {
+  job_id: string;
+  workflow: string;
+  question: string;
+}
+
 export interface Matter {
   id: string;
   name: string;
@@ -109,6 +139,7 @@ export interface QueryResponse {
   plan: Plan | null;
   retrieval: SubQueryOutcome[];
   expansion: Expansion | null;
+  reviews: ReviewOutcome[];
   citations: Citation[];
   answer: string | null;
   grounded: boolean | null;
@@ -167,6 +198,7 @@ export interface Verdict {
 export type StreamEvent =
   | { event: "plan"; data: { plan: Plan | null } }
   | { event: "sources"; data: { citations: Citation[] } }
+  | { event: "review"; data: ReviewEvent }
   | { event: "token"; data: { text: string } }
   | { event: "done"; data: QueryResponse }
   | { event: "verdict"; data: Verdict }

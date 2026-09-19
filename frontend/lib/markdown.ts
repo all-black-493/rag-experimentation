@@ -1,8 +1,8 @@
 /**
- * The small subset of markdown the generation prompt actually produces:
- * paragraphs, bullet and numbered lists, and **bold**. Rendered to a block
- * structure the answer view turns into elements - never into HTML strings, so
- * there is nothing to sanitise.
+ * The small subset of markdown the prompts actually produce: paragraphs,
+ * bullet and numbered lists, **bold**, *em*, and - for a memo - headings.
+ * Rendered to a block structure the answer view turns into elements - never
+ * into HTML strings, so there is nothing to sanitise.
  */
 
 export type Inline =
@@ -11,12 +11,13 @@ export type Inline =
   | { kind: "em"; text: string };
 
 export type Block =
+  | { kind: "heading"; text: string }
   | { kind: "paragraph"; inlines: Inline[] }
   | { kind: "list"; ordered: boolean; items: Inline[][] };
 
 const BULLET = /^\s*[-*•]\s+(.*)$/;
 const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
-// The prompt asks for no headings; if one arrives anyway it reads as a bold lead line.
+// The memo prompt asks for headings (Issue, Law, …); the answer prompt asks for none.
 const HEADING = /^\s*#{1,6}\s+(.*)$/;
 // **strong** and *em* - the latter is how the model sets case names, which is
 // also how a law report sets them.
@@ -54,7 +55,7 @@ export function blocks(markdown: string): Block[] {
     if (heading) {
       flushParagraph();
       flushList();
-      out.push({ kind: "paragraph", inlines: [{ kind: "strong", text: heading[1].replace(/\*\*/g, "") }] });
+      out.push({ kind: "heading", text: heading[1].replace(/\*\*/g, "").trim() });
       continue;
     }
     const bullet = BULLET.exec(line);

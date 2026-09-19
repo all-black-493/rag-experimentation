@@ -19,7 +19,7 @@ interface Props {
 }
 
 /**
- * Ask mode. Streams the draft as it arrives, then swaps in the authoritative
+ * Ask and research. Streams the draft as it arrives, then swaps in the authoritative
  * answer from `done` - which may have withdrawn the draft if it wasn't
  * grounded, or removed a marker that pointed nowhere.
  */
@@ -67,7 +67,11 @@ export function AnswerView({ phase, draft, result, citations, activeIndex, onOpe
     <div>
       <div className="prose-law" aria-busy={streaming}>
         {blocks(text).map((block, i) =>
-          block.kind === "paragraph" ? (
+          block.kind === "heading" ? (
+            <h2 key={i} className="mt-7 mb-2 font-mono text-xs uppercase tracking-[0.08em] text-ink-3 first:mt-0">
+              {block.text}
+            </h2>
+          ) : block.kind === "paragraph" ? (
             <p key={i}>{block.inlines.map(renderInline)}</p>
           ) : block.ordered ? (
             <ol key={i} className="mt-3 list-decimal space-y-1.5 pl-6 marker:font-mono marker:text-sm marker:text-ink-3">

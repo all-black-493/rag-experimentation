@@ -2,13 +2,14 @@
 
 import { describeOutcome } from "@/lib/format";
 import type { Phase } from "@/lib/useResearch";
-import type { Mode, Plan, SubQueryOutcome } from "@/lib/types";
+import type { Mode, Plan, ReviewEvent, SubQueryOutcome } from "@/lib/types";
 
 interface Props {
   phase: Phase;
   mode: Mode;
   plan: Plan | null;
   retrieval: SubQueryOutcome[];
+  reviews?: ReviewEvent[];
   courtNames: Map<string, string>;
   // After the verdict: whether the answer stood.
   grounded?: boolean | null;
@@ -17,6 +18,7 @@ interface Props {
 const STATUS: Record<Exclude<Phase, "idle" | "done">, string> = {
   planning: "Deciding where to look…",
   searching: "Searching and ranking passages…",
+  reviewing: "Reading what was found for what is missing…",
   answering: "Writing the answer…",
   verifying: "Checking the answer against its sources…",
 };
@@ -26,14 +28,14 @@ const STATUS: Record<Exclude<Phase, "idle" | "done">, string> = {
  * dashboard: collections, any court or year restriction, and whether the
  * planner's own restriction had to be relaxed.
  */
-export function PlanStrip({ phase, mode, plan, retrieval, courtNames, grounded }: Props) {
+export function PlanStrip({ phase, mode, plan, retrieval, reviews = [], courtNames, grounded }: Props) {
   if (phase === "idle") return null;
 
   const outcomes = retrieval.length
     ? retrieval.map((o) => describeOutcome(o, courtNames))
     : plan?.sub_queries.map((s) =>
         describeOutcome(
-          { query: s.query, collection: s.collection, filters: { courts: s.courts, year_from: s.year_from ?? undefined, year_to: s.year_to ?? undefined }, retrieved: 0, relaxed: false },
+          { query: s.query, collection: s.collection, filters: { courts: s.courts, year_from: s.year_from ?? undefined, year_to: s.year_to ?? undefined }, retrieved: 0, relaxed: false, round: 1 },
           courtNames,
         ),
       ) ?? [];
@@ -58,13 +60,21 @@ export function PlanStrip({ phase, mode, plan, retrieval, courtNames, grounded }
           · {relaxed === 1 ? "a restriction was" : `${relaxed} restrictions were`} widened to find enough
         </span>
       )}
-      {phase === "done" && mode === "ask" && grounded === true && (
+      {reviews
+        .filter((review) => review.follow_ups.length > 0)
+        .map((review) => (
+          <span key={review.round}>
+            <span className="text-ink-3">· Pass {review.round + 1}</span>{" "}
+            {review.follow_ups.map((f) => f.reason).join(", ")}
+          </span>
+        ))}
+      {phase === "done" && mode !== "search" && grounded === true && (
         <span className="text-ok">· verified against its sources</span>
       )}
       {plan?.origin === "fallback" && phase === "done" && (
         <span className="text-ink-3">· planner unavailable, searched everything in scope</span>
       )}
-      {phase === "done" && mode === "ask" && consulted.length === 0 && (
+      {phase === "done" && mode !== "search" && consulted.length === 0 && (
         <span className="text-ink-3">Nothing consulted.</span>
       )}
     </div>

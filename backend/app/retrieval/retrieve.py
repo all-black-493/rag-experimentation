@@ -10,6 +10,10 @@ The sub-queries run in parallel. Each worker inherits the request's context
 (`contextvars.copy_context`) - the active trace span lives there - so the
 retriever observations still nest under the request. Results are merged in
 plan order regardless of which finished first, so the pool is deterministic.
+
+A second pass (research mode, after a review) runs the review's follow-ups
+instead of the plan and adds to the pool rather than replacing it: what the
+first pass kept stays, and the reranker judges old and new together.
 """
 
 import contextvars
@@ -82,9 +86,13 @@ def retrieve(
     min_candidates: int,
     cache: TTLCache | None = None,
 ) -> dict:
-    plan = state["plan"]
     user = state["user_filters"]
-    searches = _with_original(plan.sub_queries, state["question"])
+    follow_ups = state.get("follow_ups") or []
+    round_number = state.get("rounds", 0) + 1
+    if follow_ups:
+        searches = list(follow_ups)
+    else:
+        searches = _with_original(state["plan"].sub_queries, state["question"])
 
     def run_one(sub: SubQuery) -> tuple[list[Document], SubQueryResult]:
         effective = merge(user, sub.filters())
@@ -117,6 +125,7 @@ def retrieve(
             filters=applied.narrowing(),
             retrieved=len(documents),
             relaxed=relaxed,
+            round=round_number,
         )
 
     # One context copy per worker, taken here on the request thread: a copy
@@ -130,8 +139,11 @@ def retrieve(
             )
         )
 
-    pooled: dict[tuple, Document] = {}
-    results: list[SubQueryResult] = []
+    # A follow-up pass keeps what the previous pass kept, in front.
+    pooled: dict[tuple, Document] = (
+        {_identity(doc): doc for doc in state["documents"]} if follow_ups else {}
+    )
+    results: list[SubQueryResult] = list(state.get("retrieval", [])) if follow_ups else []
     for documents, result in outcomes:
         results.append(result)
         # First occurrence wins: a chunk two sub-queries both found keeps the
@@ -140,7 +152,7 @@ def retrieve(
         for doc in documents:
             pooled.setdefault(_identity(doc), doc)
 
-    return {"documents": list(pooled.values()), "retrieval": results}
+    return {"documents": list(pooled.values()), "retrieval": results, "follow_ups": []}
 
 
 def _with_original(sub_queries: list[SubQuery], question: str) -> list[SubQuery]:

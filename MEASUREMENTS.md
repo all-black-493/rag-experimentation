@@ -262,3 +262,29 @@ demand letter's "our client will … exercise her right of re-entry, levy distre
 ranking survives; the calibration doesn't. A stronger reranker (MiniLM-L-12, bge-reranker-
 base) is the obvious candidate, at 2–10× the per-pair cost — to be measured against the
 three sets and the latency budget, not assumed.
+
+
+---
+
+## 2026-09-20 · Step 4, research (PR #13, `research`)
+
+**Unmeasured — every step of a research run past retrieval is a model call.** The review
+(Haiku) and the memo (Sonnet) both return `400 credit balance is too low`. Built and tested
+with fakes; run live only far enough to see it degrade as designed: `plan → sources → review`
+(no follow-ups, the review's failure logged) `→ error` (the memo), the error told to the
+follower in the provider's own sentence and recorded on the job.
+
+What to measure once credits are back, in this order:
+
+1. **Does the second pass find what the first missed?** A set of 10–15 questions whose
+   answer needs both the Act and a case (or a case and its contrary authority), scored on
+   document-set recall after pass 1 and after pass 2 — the relationship-set shape. The
+   difference is the review's worth.
+2. **Memo quality.** `run_eval.py` faithfulness and citation coverage over the memo, against
+   the ask-mode numbers on the same questions; and a rubric check that every heading is
+   present and *Authorities* names at least one authority against.
+3. **Cost and time.** Calls per run (plan, review, memo, verify ×1–2), tokens, wall clock
+   from start to `done` and to `verdict`. Budget: the plan's "minutes; progress streamed".
+
+Also in this PR: a stale `matter_id` on `/query` now returns 404 instead of failing inside
+retrieval — the check written for Step 3 had not made it into that commit.

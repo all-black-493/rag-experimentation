@@ -34,8 +34,9 @@ class QueryOutcome:
     plan: QueryPlan | None = None
     retrieval: list[SubQueryResult] = field(default_factory=list)
     expansion: dict | None = None
+    reviews: list[dict] = field(default_factory=list)
     citations: list[Citation] = field(default_factory=list)
-    # Ask mode only.
+    # Ask and research only.
     answer: str | None = None
     grounded: bool | None = None
 
@@ -78,6 +79,7 @@ def _finalize(state: GraphState, mode: Mode, question: str, root) -> QueryOutcom
         plan=state.get("plan"),
         retrieval=state.get("retrieval", []),
         expansion=state.get("expansion"),
+        reviews=state.get("reviews", []),
         citations=build_citations(documents),
     )
     metadata: dict = {
@@ -185,6 +187,8 @@ def stream_query(
                             yield StreamEvent(
                                 "sources", {"citations": build_citations(state["documents"])}
                             )
+                        elif node == "review":
+                            yield StreamEvent("review", _review_payload(state))
                         elif node == "generate":
                             answered = True
                             yield StreamEvent("done", _finalize(state, mode, question, root))
@@ -195,7 +199,7 @@ def stream_query(
         except Exception as exc:
             root.score_trace(name="failed", value=True, data_type="BOOLEAN")
             logger.exception("query stream failed")
-            yield StreamEvent("error", {"detail": str(exc)})
+            yield StreamEvent("error", {"detail": failure_detail(exc)})
             return
         root.score_trace(name="failed", value=False, data_type="BOOLEAN")
         if answered and state.get("grounded") is not None:
@@ -205,6 +209,33 @@ def stream_query(
             yield StreamEvent("done", _finalize(state, mode, question, root))
 
 
+def failure_detail(exc: Exception) -> str:
+    """What the reader is told. A provider's error carries its own sentence
+    inside a JSON body; the sentence is the useful part."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        message = (
+            (body.get("error") or {}).get("message")
+            if isinstance(body.get("error"), dict)
+            else None
+        )
+        if message:
+            return f"The model provider refused the request: {message}"
+    return str(exc)
+
+
 def _plan_payload(state: GraphState) -> dict:
     plan = state.get("plan")
     return {"plan": plan.model_dump() if plan else None}
+
+
+def _review_payload(state: GraphState) -> dict:
+    """The review that just closed a pass: what it found missing, and whether it asked for more."""
+    reviews = state.get("reviews", [])
+    latest = reviews[-1] if reviews and reviews[-1]["round"] == state.get("rounds") else None
+    return {
+        "round": state.get("rounds", 1),
+        "missing": latest["missing"] if latest else None,
+        "follow_ups": latest["follow_ups"] if latest else [],
+        "another_pass": bool(state.get("follow_ups")),
+    }

@@ -188,6 +188,7 @@ export function Workspace() {
                 mode={state.mode}
                 plan={state.plan}
                 retrieval={state.retrieval}
+                reviews={state.reviews}
                 courtNames={courtNames}
                 grounded={state.result?.grounded}
               />
@@ -207,7 +208,7 @@ export function Workspace() {
                     ask(q);
                   }}
                 />
-              ) : state.mode === "ask" ? (
+              ) : state.mode !== "search" ? (
                 <AnswerView
                   phase={state.phase}
                   draft={state.draft}

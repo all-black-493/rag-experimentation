@@ -16,7 +16,7 @@ const PROXY_SECRET = process.env.PROXY_SECRET;
 // Everything else is served by this app itself.
 const ALLOWED = ["query", "query/stream", "catalog", "health"];
 // Routes with an id after the prefix.
-const ALLOWED_PREFIXES = ["graph/", "matters"];
+const ALLOWED_PREFIXES = ["graph/", "matters", "workflows"];
 
 function allowed(target: string): boolean {
   return ALLOWED.includes(target) || ALLOWED_PREFIXES.some((prefix) => target.startsWith(prefix));

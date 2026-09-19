@@ -1,11 +1,14 @@
 """The retrieval graph, wired.
 
-    plan → retrieve → expand → rerank → [search] END
-                                      → [ask]    generate → verify → END / decline
+    plan → retrieve → expand → rerank → [search]   END
+                                      → [ask]      generate → verify → END / decline
+                                      → [research] review → (follow-ups) retrieve …
+                                                          → generate → verify → END / decline
 
 Every node lives in its own module; this file only connects them and binds
 their dependencies. Mode is decided per request and routes after reranking:
-search stops at ranked passages, ask goes on to a grounded answer.
+search stops at ranked passages, ask goes on to a grounded answer, research
+reads what it found, searches again for what is missing, then writes a memo.
 """
 
 from functools import partial
@@ -31,6 +34,7 @@ from app.retrieval.planner import plan
 from app.retrieval.rerank import rerank
 from app.retrieval.reranker import Reranker
 from app.retrieval.retrieve import retrieve
+from app.retrieval.review import review
 from app.retrieval.state import GraphState
 
 # Weaviate's two fusion strategies for combining BM25 and vector rankings.
@@ -42,9 +46,17 @@ HYBRID_FUSIONS = {
 }
 
 
-def route_after_rerank(state: GraphState) -> Literal["answer", "search", "decline"]:
+def route_after_rerank(state: GraphState) -> Literal["answer", "search", "review", "decline"]:
     if state["mode"] == "search":
         return "search"
+    if state["mode"] == "research":
+        return "review"
+    return "answer" if state["documents"] else "decline"
+
+
+def route_after_review(state: GraphState) -> Literal["again", "answer", "decline"]:
+    if state.get("follow_ups"):
+        return "again"
     return "answer" if state["documents"] else "decline"
 
 
@@ -117,9 +129,23 @@ def build_graph(
             rerank,
             reranker=reranker,
             relevance_threshold=settings.rerank_relevance_threshold,
-            keep={"ask": settings.rerank_top_n, "search": settings.search_results},
+            keep={
+                "ask": settings.rerank_top_n,
+                "search": settings.search_results,
+                "research": settings.research_results,
+            },
             breaker=rerank_breaker,
             pairwise=pairwise,
+        ),
+    )
+    graph.add_node(
+        "review",
+        partial(
+            review,
+            # The same fast model as planning: this is reading for gaps, not writing.
+            llm=planner or llm,
+            max_follow_ups=settings.research_max_follow_ups,
+            max_rounds=settings.research_max_rounds,
         ),
     )
     graph.add_node("generate", partial(generate, llm=llm))
@@ -135,7 +161,12 @@ def build_graph(
     graph.add_conditional_edges(
         "rerank",
         route_after_rerank,
-        {"answer": "generate", "search": END, "decline": "decline"},
+        {"answer": "generate", "search": END, "review": "review", "decline": "decline"},
+    )
+    graph.add_conditional_edges(
+        "review",
+        route_after_review,
+        {"again": "retrieve", "answer": "generate", "decline": "decline"},
     )
     graph.add_edge("generate", "verify")
     graph.add_conditional_edges(

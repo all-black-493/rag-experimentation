@@ -29,7 +29,7 @@ from app.tracing import configure_tracing, get_client
 
 # Only the chat prompts. responses.yaml holds the canned decline message, which
 # is never sent to a model and so has nothing to manage here.
-CHAT_PROMPTS = ("planner", "generation", "grounding")
+CHAT_PROMPTS = ("planner", "generation", "grounding", "profile", "review", "memo")
 
 LABEL = "production"
 

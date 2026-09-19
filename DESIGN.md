@@ -60,8 +60,8 @@ or beside the page, never at the end of it.
 - **Query slip** (`QueryComposer`): serif textarea, mode toggle, one red
   action. Enter submits; Shift+Enter breaks a line; Stop replaces the action
   while a query runs.
-- **Mode toggle** (`ModeToggle`): a radiogroup; the active option sits on
-  `sheet` in red.
+- **Mode toggle** (`ModeToggle`): a radiogroup of three — Ask, Research,
+  Search; the active option sits on `sheet` in red.
 - **Filter rail** (`FilterRail`): checkboxes with mono counts, year inputs in
   mono, help lines in `ink-3`. Built from `/catalog`; never hardcoded. The
   matter in use appears as one more source, under its own name.
@@ -72,7 +72,12 @@ or beside the page, never at the end of it.
   error itself when it fails — and an outlined *Add documents* button. No
   copy explains any of it.
 - **Plan strip** (`PlanStrip`): one mono line — live status in red while
-  running, then what was consulted, query count, and any widened restriction.
+  running, then what was consulted, query count, any widened restriction, and
+  for research each further pass with what it went looking for, in the
+  review's own words.
+- **Memo** (`AnswerView`): a research memo's headings — Issue, Law,
+  Authorities, Analysis, Conclusion — are set as the app's section labels
+  (mono, small caps, `ink-3`), not display type; the body is `.prose-law`.
 - **Citation chip** (`CitationChip`): `[n]` as a small mono tab in red-tint;
   red fill when its authority is open; inert text when it points nowhere.
 - **Authority list** (`AuthorityList`): rows on hairlines, mono index, serif

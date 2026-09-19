@@ -4,6 +4,7 @@ import type { Mode } from "@/lib/types";
 
 const OPTIONS: Array<{ value: Mode; label: string; hint: string }> = [
   { value: "ask", label: "Ask", hint: "A cited answer" },
+  { value: "research", label: "Research", hint: "A memo: searched twice, both sides" },
   { value: "search", label: "Search", hint: "Ranked passages to review" },
 ];
 

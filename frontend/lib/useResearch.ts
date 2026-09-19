@@ -1,19 +1,30 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { streamQuery } from "./api";
-import type { Citation, Mode, Plan, QueryFilters, QueryResponse, SubQueryOutcome } from "./types";
+import { followRun, startResearch, streamQuery } from "./api";
+import type {
+  Citation,
+  Mode,
+  Plan,
+  QueryFilters,
+  QueryRequest,
+  QueryResponse,
+  ReviewEvent,
+  StreamEvent,
+  SubQueryOutcome,
+} from "./types";
 
 /**
  * What the screen is doing, in the words the status line uses.
  *
  * planning   the question is with the planner
  * searching  the plan is known, passages are being retrieved and reranked
+ * reviewing  research: the pass is being read for what it missed
  * answering  tokens are arriving
  * verifying  the answer is final; the groundedness check hasn't returned
  * done       the verdict is in (or search results are)
  */
-export type Phase = "idle" | "planning" | "searching" | "answering" | "verifying" | "done";
+export type Phase = "idle" | "planning" | "searching" | "reviewing" | "answering" | "verifying" | "done";
 
 export interface ResearchState {
   phase: Phase;
@@ -21,6 +32,8 @@ export interface ResearchState {
   mode: Mode;
   plan: Plan | null;
   retrieval: SubQueryOutcome[];
+  // Research: one entry per pass reviewed.
+  reviews: ReviewEvent[];
   citations: Citation[];
   // The streamed preview; replaced by the final answer on `done`.
   draft: string;
@@ -36,6 +49,7 @@ const INITIAL: ResearchState = {
   mode: "ask",
   plan: null,
   retrieval: [],
+  reviews: [],
   citations: [],
   draft: "",
   result: null,
@@ -63,10 +77,8 @@ export function useResearch() {
       setState({ ...INITIAL, phase: "planning", question, mode });
 
       try {
-        for await (const event of streamQuery(
-          { question, mode, filters, matter_id: matterId },
-          current.signal,
-        )) {
+        const request: QueryRequest = { question, mode, filters, matter_id: matterId };
+        for await (const event of events(request, current.signal)) {
           if (current.signal.aborted) return;
           switch (event.event) {
             case "plan":
@@ -76,7 +88,14 @@ export function useResearch() {
               setState((s) => ({
                 ...s,
                 citations: event.data.citations,
-                phase: mode === "search" ? s.phase : "answering",
+                phase: mode === "search" ? s.phase : mode === "research" ? "reviewing" : "answering",
+              }));
+              break;
+            case "review":
+              setState((s) => ({
+                ...s,
+                reviews: [...s.reviews, event.data],
+                phase: event.data.another_pass ? "searching" : "answering",
               }));
               break;
             case "token":
@@ -87,7 +106,7 @@ export function useResearch() {
               // the reader can start now rather than wait for its verdict.
               setState((s) => ({
                 ...s,
-                phase: mode === "ask" && event.data.citations.length ? "verifying" : "done",
+                phase: mode !== "search" && event.data.citations.length ? "verifying" : "done",
                 result: event.data,
                 plan: event.data.plan,
                 retrieval: event.data.retrieval,
@@ -127,10 +146,15 @@ export function useResearch() {
     [cancel],
   );
 
-  const reset = useCallback(() => {
-    cancel();
-    setState(INITIAL);
-  }, [cancel]);
+  return { state, submit, cancel };
+}
 
-  return { state, submit, cancel, reset };
+/** A query streams from one request; a research run is started, then followed. */
+async function* events(request: QueryRequest, signal: AbortSignal): AsyncGenerator<StreamEvent> {
+  if (request.mode === "research") {
+    const { job_id } = await startResearch(request);
+    yield* followRun(job_id, signal);
+    return;
+  }
+  yield* streamQuery(request, signal);
 }

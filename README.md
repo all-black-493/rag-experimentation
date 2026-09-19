@@ -3,11 +3,12 @@
 Legal research over Kenyan legislation and case law. Every answer is built from passages the
 reader can open, and the system says what it consulted to build it.
 
-Two modes. **Search** returns the ranked passages themselves for review. **Ask** synthesises a
+Three modes. **Search** returns the ranked passages themselves for review. **Ask** synthesises a
 grounded answer on top of them, cites each claim to a passage, verifies the answer against its
-sources, and declines rather than guesses. A planning step routes each question to
-legislation, case law or both, and infers court and year restrictions only when the question
-names them.
+sources, and declines rather than guesses. **Research** reads what the first pass found,
+searches again for what it missed and for the other side, and writes a memo. A planning step
+routes each question to legislation, case law, the user's own documents or all three, and
+infers court and year restrictions only when the question names them.
 
 Modelled on Weaviate's legal-RAG reference architecture — collections by document type, an
 agent that inspects the schema → routes → builds filtered queries → reranks → answers — but
@@ -71,8 +72,10 @@ then the file and the record. Originals live under `data/matters/<id>/`.
 ## Retrieval
 
 ```
-plan → retrieve → expand → rerank → [search] END
-                                  → [ask]    generate → verify → END / decline
+plan → retrieve → expand → rerank → [search]   END
+                                  → [ask]      generate → verify → END / decline
+                                  → [research] review → (follow-ups) retrieve …
+                                                      → generate → verify → END / decline
 ```
 
 - **plan** (`retrieval/planner.py`) — one structured call to a small fast model
@@ -99,7 +102,14 @@ plan → retrieve → expand → rerank → [search] END
 - **rerank** — a local cross-encoder scores every candidate (title + passage) against the
   *original* question; a threshold, which the user's own documents are exempt from, and a
   per-mode cut (5 for ask, 10 for search).
-- **generate / verify** — a cited answer, streamed, then a groundedness judgment delivered
+- **review** (`retrieval/review.py`, research only) — one structured call over the reranked
+  passages: what do they not yet cover, and what would cut the other way? It returns up to
+  `RESEARCH_MAX_FOLLOW_UPS` follow-up searches, never one already run, within the user's
+  scope; those run as a second pass that adds to the pool rather than replacing it, and the
+  reranker judges old and new together. Bounded by `RESEARCH_MAX_ROUNDS` (2). A review that
+  fails costs the pass, not the memo.
+- **generate / verify** — a cited answer (or, in research, a memo under *Issue, Law,
+  Authorities, Analysis, Conclusion*), streamed, then a groundedness judgment delivered
   after it as a separate verdict. The judge is a sampled model call and disagrees with
   itself a few percent of the time, so a single "not grounded" gets one independent second
   opinion; the answer is withdrawn only if both say so. The verifier is deliberately
@@ -184,13 +194,19 @@ year_from, year_to}, matter_id?}` → `{plan, retrieval, citations, answer?, gro
 `POST /query/stream` — the same as server-sent events: `plan` → `sources` → `token`… →
 `done` (the final answer) → `verdict` (grounded, or withdrawn). `GET /catalog` — what the
 corpus contains, for the UI's filters. `GET /graph/{doc_id}` — what a document cites and
-what cites it. Rate-limited per client; `PROXY_SECRET` gates everything but `/health` when
-set.
+what cites it.
+
+Research runs as a workflow, because it takes long enough to watch: `POST /workflows/research`
+(the same body as a query) returns a job at once; `GET /workflows/{job_id}/events` streams the
+same events a query does, plus `review` after each pass, replayed from the start for a client
+that connects late; `GET /workflows/{job_id}` is the job's status. `app/workflows/` owns no
+retrieval: a workflow composes the graph. Rate-limited per client; `PROXY_SECRET` gates
+everything but `/health` when set.
 
 ## Frontend
 
-A research desk, not a chat: the query slip at the top of the page, the answer as a cited
-argument, each `[n]` opening the authority in a bundle beside the page — a bottom sheet on a
+A research desk, not a chat: the query slip at the top of the page with its three modes, the
+answer (or memo) as a cited argument, each `[n]` opening the authority in a bundle beside the page — a bottom sheet on a
 phone, a drawer at laptop width, a column from 1280px. The source is never below the answer.
 An authority the graph added says why it is there; the bundle lists what each authority
 cites and what cites it, each row opening the document. The rail holds the matter in use:
@@ -247,11 +263,12 @@ backend/app/
   matters/      models, store (disk), pdf (blocks → page + box), loaders, chunking,
                 ingest (the job), enrich (profile), delete, catalog (for the planner)
   retrieval/    catalog, plan (schema), planner (node), filters, retrieve, expand, rerank,
-                answer, grounding, citations, run (one query under one trace), graph (wiring)
-  api/          schemas, routes/{query,catalog,graph,matters}, streaming (thread → SSE bridge)
+                review, answer, grounding, citations, run (one query under one trace), graph
+  workflows/    runs (a job with followable events), research (the graph in research mode)
+  api/          schemas, routes/{query,catalog,graph,matters,workflows}, streaming
   config, main, dependencies, jobs, proxy_auth, rate_limit, caching, resilience, scoring,
   tracing, metrics, prompts, prompt_sync
-backend/prompts/   planner, generation, grounding, profile, responses
+backend/prompts/   planner, generation, review, memo, grounding, profile, responses
 backend/eval/      the harness above
 frontend/          app/ (layout, page, api proxy), components/, lib/ (types, api, stream, hook)
 ```

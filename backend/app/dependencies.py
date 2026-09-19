@@ -11,6 +11,7 @@ from app.graph.store import Graph
 from app.jobs import JobRegistry
 from app.matters.store import MatterStore
 from app.retrieval.catalog import Catalog
+from app.workflows.runs import WorkflowRuns
 
 
 def get_graph(request: Request) -> CompiledStateGraph:
@@ -46,6 +47,10 @@ def get_retrieval_cache(request: Request) -> TTLCache:
     return request.app.state.retrieval_cache
 
 
+def get_workflow_runs(request: Request) -> WorkflowRuns:
+    return request.app.state.workflows
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 GraphDep = Annotated[CompiledStateGraph, Depends(get_graph)]
 CatalogDep = Annotated[Catalog, Depends(get_catalog)]
@@ -55,3 +60,4 @@ MatterStoreDep = Annotated[MatterStore, Depends(get_matter_store)]
 JobsDep = Annotated[JobRegistry, Depends(get_jobs)]
 IngestDep = Annotated[Callable[[str, str], int], Depends(get_ingest)]
 RetrievalCacheDep = Annotated[TTLCache, Depends(get_retrieval_cache)]
+WorkflowRunsDep = Annotated[WorkflowRuns, Depends(get_workflow_runs)]

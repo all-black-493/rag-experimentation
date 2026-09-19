@@ -1,10 +1,10 @@
-"""Ask mode's tail: generate a cited answer, then check it against its sources."""
+"""The tail of ask and research: a cited answer or memo, then a check against its sources."""
 
 from langchain_core.language_models import BaseChatModel
 
 from app.retrieval.citations import format_context
 from app.retrieval.grounding import DECLINE_MESSAGE, VERIFY_PROMPT, GroundednessCheck
-from app.retrieval.prompts import GENERATION_PROMPT
+from app.retrieval.prompts import GENERATION_PROMPT, MEMO_PROMPT
 from app.retrieval.state import GraphState
 from app.tracing import linked_prompt, observation
 
@@ -22,12 +22,12 @@ def _prompt_metadata(prompt) -> dict:
 def generate(state: GraphState, llm: BaseChatModel) -> dict:
     # No wrapping span here: LangGraph's callback already emits one named after
     # this node, and a second identically-named span just doubles the tree.
+    # Research writes a memo under fixed headings; ask answers in paragraphs.
+    prompt = MEMO_PROMPT if state["mode"] == "research" else GENERATION_PROMPT
     context = format_context(state["documents"])
-    message = GENERATION_PROMPT.template.invoke(
-        {"context": context, "question": state["question"]}
-    )
-    with linked_prompt(GENERATION_PROMPT.name):
-        response = llm.invoke(message, config=_prompt_metadata(GENERATION_PROMPT))
+    message = prompt.template.invoke({"context": context, "question": state["question"]})
+    with linked_prompt(prompt.name):
+        response = llm.invoke(message, config=_prompt_metadata(prompt))
     # .text (not .content) because content can be a list of blocks - e.g. Claude's
     # adaptive thinking, on by default, adds a thinking block alongside the text one.
     return {"answer": response.text}

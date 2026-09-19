@@ -8,11 +8,23 @@ const EXAMPLES: Record<Mode, string[]> = {
     "How have Kenyan courts treated the burden of proving compelling reasons to deny bail?",
     "Does a licensed auctioneer need a separate licence to sell seized liquor?",
   ],
+  research: [
+    "Is a probationary employee entitled to notice on termination?",
+    "Can a landlord levy distress for rent while the tenant disputes the arrears?",
+    "When may a court deny bail for a pending charge of robbery with violence?",
+  ],
   search: [
     "robbery with violence section 296(2) Penal Code",
     "gratuity versus severance pay Employment Act",
     "judicial notice Evidence Act section 60",
   ],
+};
+
+const PURPOSE: Record<Mode, string> = {
+  ask: "Ask a question and get an answer built only from Kenyan legislation and judgments, each claim cited to the passage it rests on.",
+  research:
+    "Research reads what the first search found, searches again for what it missed and for the other side, and writes a memo: issue, law, authorities, analysis, conclusion.",
+  search: "Search returns the passages themselves, ranked by relevance, for you to read and cite.",
 };
 
 /**
@@ -26,9 +38,7 @@ export function EmptyState({ mode, catalog, onPick }: { mode: Mode; catalog: Cat
   return (
     <div className="max-w-[60ch]">
       <p className="prose-law text-ink-2">
-        {mode === "ask"
-          ? "Ask a question and get an answer built only from Kenyan legislation and judgments, each claim cited to the passage it rests on."
-          : "Search returns the passages themselves, ranked by relevance, for you to read and cite."}
+        {PURPOSE[mode]}
         {acts && cases && (
           <span className="text-ink-3">
             {" "}

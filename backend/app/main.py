@@ -9,7 +9,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIASGIMiddleware
 
-from app.api.routes import catalog, graph, matters, query
+from app.api.routes import catalog, graph, matters, query, workflows
 from app.caching import TTLCache, enable_llm_cache
 from app.config import get_settings
 from app.graph.store import ensure_citation_collection, load_graph
@@ -27,6 +27,7 @@ from app.tracing import configure_tracing, shutdown_tracing
 from app.vectorstore.client import weaviate_client
 from app.vectorstore.embeddings import build_embeddings, warm_embeddings
 from app.vectorstore.schema import ensure_collections
+from app.workflows.runs import WorkflowRuns
 
 MATTERS_DIR = Path(__file__).resolve().parent.parent / "data" / "matters"
 
@@ -91,6 +92,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.jobs = JobRegistry(max_concurrency=settings.ingest_concurrency)
         app.state.retrieval_cache = retrieval_cache
         app.state.ingest = partial(ingest, matter_store, client, embeddings, settings, planner)
+        # Workflows get their own job slots so a memo never waits behind an upload.
+        app.state.workflows = WorkflowRuns(JobRegistry(max_concurrency=settings.research_concurrency))
         app.state.graph = build_graph(
             client=client,
             embeddings=embeddings,
@@ -123,6 +126,7 @@ app.include_router(query.router)
 app.include_router(catalog.router)
 app.include_router(graph.router)
 app.include_router(matters.router)
+app.include_router(workflows.router)
 
 
 @app.get("/health")

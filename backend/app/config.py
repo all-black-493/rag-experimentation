@@ -70,6 +70,13 @@ class Settings(BaseSettings):
     min_candidates_per_subquery: int = 5
     # How many reranked passages search mode returns for review.
     search_results: int = 10
+    # Research mode: passes of retrieval (the plan, then a review's follow-ups),
+    # follow-up searches a review may ask for, and passages the memo is
+    # written from.
+    research_max_rounds: int = 2
+    research_max_follow_ups: int = 3
+    research_results: int = 12
+    research_concurrency: int = 2
     # Citation-graph expansion, bounded so the reranker's pool stays sane:
     # passages pulled in per authority the question names, and documents
     # one hop from the top candidates when the question is relational.
@@ -118,6 +125,7 @@ class Settings(BaseSettings):
     # Anonymous access has no auth, so this bounds abuse per client instead.
     rate_limit_query: str = "30/minute"
     rate_limit_upload: str = "20/minute"
+    rate_limit_research: str = "6/minute"
 
     # Matters: the user's own documents. Stored under data/matters, one
     # directory per matter; indexed in the background, at most this many at

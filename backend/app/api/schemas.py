@@ -11,7 +11,7 @@ from app.metadata import Collection
 from app.retrieval.catalog import Catalog  # noqa: F401 - re-exported as the /catalog response
 from app.retrieval.filters import LegalFilters
 
-Mode = Literal["search", "ask"]
+Mode = Literal["search", "ask", "research"]
 
 
 class QueryFilters(BaseModel):
@@ -67,6 +67,7 @@ class SubQueryOutcome(BaseModel):
     filters: dict
     retrieved: int
     relaxed: bool
+    round: int = 1
 
 
 class Citation(BaseModel):
@@ -90,6 +91,24 @@ class Citation(BaseModel):
     parent_text: str
     relevance_score: float | None = None
     via: str | None = None
+
+
+class WorkflowAccepted(BaseModel):
+    job_id: str
+    workflow: str
+    question: str
+
+
+class WorkflowStatus(BaseModel):
+    job_id: str
+    workflow: str
+    question: str
+    status: Literal["queued", "running", "succeeded", "failed"]
+    error: str | None = None
+    # Events recorded so far; `done` once the run has ended.
+    events: int
+    done: bool
+    created_at: float
 
 
 class MatterCreate(BaseModel):
@@ -127,6 +146,20 @@ class GraphNeighbourhood(BaseModel):
     cited_by: list[GraphLink]
 
 
+class FollowUp(BaseModel):
+    query: str
+    collection: Collection
+    reason: str
+
+
+class ReviewOutcome(BaseModel):
+    """What a research pass's review found missing, and what it searched for next."""
+
+    round: int
+    missing: str
+    follow_ups: list[FollowUp]
+
+
 class QueryResponse(BaseModel):
     mode: Mode
     question: str
@@ -134,7 +167,23 @@ class QueryResponse(BaseModel):
     retrieval: list[SubQueryOutcome] = []
     # What the citation graph added, if anything.
     expansion: dict | None = None
+    # Research mode: one entry per review that asked for another pass.
+    reviews: list[ReviewOutcome] = []
     citations: list[Citation]
-    # Ask mode only.
+    # Ask and research only.
     answer: str | None = None
     grounded: bool | None = None
+
+    @classmethod
+    def from_outcome(cls, outcome) -> "QueryResponse":
+        return cls(
+            mode=outcome.mode,
+            question=outcome.question,
+            plan=outcome.plan.model_dump() if outcome.plan else None,
+            retrieval=outcome.retrieval,
+            expansion=outcome.expansion,
+            reviews=outcome.reviews,
+            citations=outcome.citations,
+            answer=outcome.answer,
+            grounded=outcome.grounded,
+        )
