@@ -6,6 +6,10 @@ ingested through the CLI before this runs (see .github/workflows/eval.yml).
 
 Runs in its own isolated environment (see README.md) because ragas 0.4.x's dependency
 metadata conflicts with the main app's LangChain 1.x pins.
+
+A local model answers one question at a time and takes minutes over each, so a run
+is hours: `--concurrency 1 --timeout 1800 --resume` writes every result to
+`<report>.partial.jsonl` as it lands and a restarted run picks up from there.
 """
 
 import argparse
@@ -34,7 +38,6 @@ sys.path.insert(0, str(EVAL_DIR.parent))
 from app.scoring import citation_coverage
 
 HEALTH_TIMEOUT_SECONDS = 60
-CONCURRENCY = 5
 # Legal answers decompose into many claims; at 4096 the judge overran on 5 of 36
 # and scored a correct verbatim answer 0.00.
 JUDGE_MAX_TOKENS = 16384
@@ -191,11 +194,10 @@ async def score_sample(
 
 
 def build_judge(args: argparse.Namespace):
-    """The faithfulness judge: Claude by default, or a local Ollama model.
+    """The faithfulness judge: a local Ollama model by default, or Claude.
 
-    `--judge-model ollama:qwen3:8b` reads the local model; the same judge
-    must be used across the runs being compared, since a judge is part of
-    the instrument.
+    The same judge must be used across the runs being compared, since a
+    judge is part of the instrument.
     """
     if args.judge_model.startswith("ollama:"):
         from langchain_ollama import ChatOllama
@@ -219,17 +221,48 @@ def build_judge(args: argparse.Namespace):
     )
 
 
+def partial_path(report: Path) -> Path:
+    return report.with_name(report.stem + ".partial.jsonl")
+
+
+def load_partial(path: Path) -> dict[str, SampleResult]:
+    """Results a previous run finished: scored, or unanswered on purpose. A failed
+    query or a judge that couldn't score is retried, not carried over."""
+    done: dict[str, SampleResult] = {}
+    if not path.exists():
+        return done
+    for line in path.read_text().splitlines():
+        if line.strip():
+            result = SampleResult(**json.loads(line))
+            if result.error is None and result.judge_error is None:
+                done[result.id] = result
+    return done
+
+
 async def run(args: argparse.Namespace) -> Report:
     dataset = load_dataset(args.dataset)
 
     judge = LangchainLLMWrapper(build_judge(args), bypass_temperature=True)
     faithfulness = Faithfulness(llm=judge)
 
-    async with httpx.AsyncClient(base_url=args.api_url, timeout=180.0) as client:
+    partial = partial_path(args.report)
+    done = load_partial(partial) if args.resume else {}
+    if done:
+        print(f"resuming: {len(done)} of {len(dataset)} already scored in {partial}")
+
+    async def score_and_keep(row: dict, semaphore: asyncio.Semaphore) -> SampleResult:
+        if row["id"] in done:
+            return done[row["id"]]
+        result = await score_sample(client, faithfulness, row, semaphore)
+        if args.resume:
+            with partial.open("a") as handle:
+                handle.write(json.dumps(vars(result)) + "\n")
+        return result
+
+    async with httpx.AsyncClient(base_url=args.api_url, timeout=args.timeout) as client:
         await wait_for_health(client, HEALTH_TIMEOUT_SECONDS)
-        semaphore = asyncio.Semaphore(CONCURRENCY)
-        tasks = [score_sample(client, faithfulness, row, semaphore) for row in dataset]
-        results = await asyncio.gather(*tasks)
+        semaphore = asyncio.Semaphore(args.concurrency)
+        results = await asyncio.gather(*[score_and_keep(row, semaphore) for row in dataset])
 
     setup = {"judge_model": args.judge_model, "api_url": args.api_url, "dataset": str(args.dataset)}
     try:
@@ -332,11 +365,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument(
         "--judge-model",
-        default="claude-sonnet-5",
-        help="a Claude model id, or ollama:<model> for a local judge",
+        default="ollama:qwen3:8b",
+        help="ollama:<model> for a local judge, or a Claude model id",
     )
     parser.add_argument("--anthropic-api-key", default="")
     parser.add_argument("--ollama-base-url", default="http://localhost:11435")
+    parser.add_argument("--concurrency", type=int, default=5, help="1 for a local model")
+    parser.add_argument("--timeout", type=float, default=180.0, help="seconds per /query")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="keep each result in <report>.partial.jsonl and skip those on the next run",
+    )
     parser.add_argument("--faithfulness-threshold", type=float, default=0.8)
     parser.add_argument("--min-answer-rate", type=float, default=0.9)
     parser.add_argument("--min-citation-coverage", type=float, default=0.8)

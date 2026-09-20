@@ -453,3 +453,27 @@ for a machine that can afford it.
 
 This is the baseline the corpus tree will be judged against. The tree needs ~5k summary
 calls a level over case law: hours on a paid model, days on this CPU; not built here.
+
+## 2026-09-20 · The gate without a paid model (PR #17, `ollama` → `main`)
+
+Local models are now the default (`LLM_PROVIDER=ollama`, `qwen3:8b`); Anthropic is the
+opt-in. CI had gated every PR on the 36-question faithfulness eval, which failed the moment
+the Anthropic account ran out of credits (`400 credit balance is too low`), on runs
+35446540746 through 35512968574. What CI measures on a PR is now what needs no model:
+
+| check | floor | last measured on the CI slice (run 35512968574) |
+|---|---|---|
+| golden set recall@5 / MRR | 0.97 / 0.95 | 100.0% / 1.000 (36 fallback plans: no planner) |
+| matter set recall@5 / MRR | 0.95 / 0.90 | 100.0% / 0.950 |
+| authorities found, spurious | 3/3, 0 | 3/3, 0 |
+
+Floors sit under the measured numbers by about one question, the room the planner's
+rewrites took on the full corpus (97.2% / 0.981). `retrieval_benchmark.py` gained
+`--min-recall`/`--min-mrr` for this; it had never failed a run.
+
+The faithfulness gate itself is a manual run: `run_eval.py --concurrency 1 --timeout 1800
+--resume` against the local stack (hours; `--resume` keeps each result in
+`report.partial.jsonl`, so a restart continues), or `workflow_dispatch` on CI with a
+Claude judge when a key has credits. Its last measured numbers remain the Anthropic ones
+above (faithfulness 0.924, coverage 0.74 before prompt v5); the local numbers are not yet
+taken.

@@ -185,6 +185,9 @@ def main() -> int:
         default="all",
         help="matter set only: search the whole corpus too (all) or the matter alone",
     )
+    # The gate: below either floor the run fails, which is what CI needs from it.
+    parser.add_argument("--min-recall", type=float, default=None)
+    parser.add_argument("--min-mrr", type=float, default=None)
     args = parser.parse_args()
 
     if args.set == "matter":
@@ -211,6 +214,14 @@ def main() -> int:
         scores = run(args.api_url, args.k, dataset)
     suffix = f"/{args.scope}" if args.set == "matter" else ""
     print(scores.render(f"{args.label}/{args.set}{suffix}", args.k))
+    below = []
+    if args.min_recall is not None and scores.recall_at_k < args.min_recall:
+        below.append(f"recall@{args.k} {scores.recall_at_k:.1%} < {args.min_recall:.1%}")
+    if args.min_mrr is not None and scores.mrr < args.min_mrr:
+        below.append(f"MRR {scores.mrr:.3f} < {args.min_mrr:.3f}")
+    if below:
+        print("GATE: FAIL (" + ", ".join(below) + ")")
+        return 1
     return 0
 
 

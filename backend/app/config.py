@@ -28,10 +28,10 @@ class Settings(BaseSettings):
     # passages do not. Omitting it silently costs retrieval quality.
     local_embedding_query_prefix: str = "Represent this sentence for searching relevant passages: "
 
-    # Who answers. "anthropic" pairs the generation model with the planner
-    # model below; "ollama" runs local models (see app.llm) and costs nothing
-    # per call, which is what lets every step be measured.
-    llm_provider: Literal["anthropic", "ollama"] = "anthropic"
+    # Who answers. "ollama" runs local models (see app.llm) and costs nothing
+    # per call, which is what lets every step be measured; "anthropic" pairs
+    # the generation model with the planner model below.
+    llm_provider: Literal["anthropic", "ollama"] = "ollama"
 
     anthropic_api_key: str = ""
     generation_model: str = "claude-sonnet-5"

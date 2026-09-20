@@ -18,15 +18,16 @@ self-hosted: the agent is our own LangGraph, not Weaviate Cloud's Query Agent.
 
 | | |
 |---|---|
-| `backend/` | FastAPI · LangGraph · Weaviate (self-hosted) · local embeddings + cross-encoder · PyMuPDF · Claude · Langfuse |
+| `backend/` | FastAPI · LangGraph · Weaviate (self-hosted) · local embeddings + cross-encoder · PyMuPDF · Ollama (Qwen3) or Claude · Langfuse |
 | `frontend/` | Next.js 16 · TypeScript · Tailwind v4 · a server-side proxy to the backend |
 | `corpus/` | 1,533 documents from new.kenyalaw.org: 543 Acts, 990 judgments across 7 courts (not committed, see `corpus/README.md`) |
 
 ## Run
 
 ```bash
-cp backend/.env.example backend/.env       # ANTHROPIC_API_KEY, optional Langfuse keys
-docker compose up -d --build               # Weaviate + API on :8010
+cp backend/.env.example backend/.env       # optional Langfuse keys
+docker compose up -d --build               # Weaviate + Ollama + API on :8010
+docker compose exec ollama ollama pull qwen3:8b       # ~5 GB, once
 docker compose exec app python -m app.corpus.ingest /corpus/all_chunks.json
 docker compose exec app python -m app.graph.build    # citation graph, ~1 min, no model calls
 docker compose restart app                 # catalog and graph are loaded at startup
@@ -34,26 +35,20 @@ docker compose restart app                 # catalog and graph are loaded at sta
 cd frontend && cp .env.example .env.local && npm install && npm run dev   # :3000
 ```
 
-### Local models
+### Models
 
-Every model call can go to Ollama instead of Anthropic, so measuring costs nothing:
+Every model call goes to Ollama, so nothing costs anything per call. `OLLAMA_MODEL`
+(answers, memos, reports, the verifier) and `OLLAMA_FAST_MODEL` (planner, review, profiles,
+extraction) default to `qwen3:8b`; a machine with the memory can run `qwen3:14b` or
+`qwen3:30b` for the first. Thinking is off (`OLLAMA_REASONING`) — every structured call is
+JSON, not reasoning, and on a CPU thinking doubles the time. The context window is 16k
+(`OLLAMA_NUM_CTX`): a memo prompt carries twelve parent windows. An NVIDIA GPU needs the
+device reservation commented in `docker-compose.yml`; a host install instead of the service
+is `OLLAMA_BASE_URL=http://host.docker.internal:11434`.
 
-```bash
-LLM_PROVIDER=ollama docker compose --profile ollama up -d      # adds the ollama service
-docker compose exec ollama ollama pull qwen3:8b                 # ~5 GB, once
-```
-
-`OLLAMA_MODEL` (answers, memos, reports, the verifier) and `OLLAMA_FAST_MODEL` (planner,
-review, profiles, extraction) default to `qwen3:8b`; a machine with the memory can run
-`qwen3:14b` or `qwen3:30b` for the first. Thinking is off (`OLLAMA_REASONING`) — every
-structured call is JSON, not reasoning, and on a CPU thinking doubles the time. The context
-window is 16k (`OLLAMA_NUM_CTX`): a memo prompt carries twelve parent windows. An NVIDIA GPU
-needs the device reservation commented in `docker-compose.yml`; a host install instead of
-the service is `OLLAMA_BASE_URL=http://host.docker.internal:11434`. The eval harness's judge
-can be local too: `run_eval.py --judge-model ollama:qwen3:8b`.
-
-One factory, `app/llm.py`, builds both roles for either provider; nothing downstream knows
-which it has.
+`LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY` uses Claude instead (Sonnet to answer,
+Haiku to plan). One factory, `app/llm.py`, builds both roles for either provider; nothing
+downstream knows which it has.
 
 Ingest is idempotent per document and resumable; a document left half-indexed by an
 interrupted run is redone. Embedding is CPU-bound (~8 chunks/s here): the full corpus is
@@ -323,9 +318,10 @@ generations link to the version that produced them.
 - `run_eval.py` — the faithfulness gate: ragas faithfulness ≥ 0.8, answer rate ≥ 0.9,
   citation coverage ≥ 0.8, zero invalid citations, no API errors; reports p50/p95 latency
   per `/query` and the provider and models that answered, so a number is never read without
-  its setup. The judge can be Claude or a local model.
+  its setup. The judge is local by default (`--judge-model ollama:qwen3:8b`) or Claude;
+  `--concurrency 1 --timeout 1800 --resume` is the local run, hours long and restartable.
 - `retrieval_benchmark.py` — the tables above, in seconds, no judge; `--set golden |
-  relationships | both | matter`.
+  relationships | topics | both | matter`; `--min-recall` and `--min-mrr` make it a gate.
 - `golden_relationships.jsonl` — 10 multi-document questions, generated from the citation
   graph by `build_relationship_questions.py`.
 - `golden_topics.jsonl` — 8 thematic questions ("how have courts treated …") whose ground
@@ -340,7 +336,9 @@ generations link to the version that produced them.
   deterministic step over the same fixtures: every citation found, resolved when the corpus
   holds it, anchored to a passage.
 
-`.github/workflows/eval.yml` runs unit tests, ingests the slice, runs both, on every PR.
+`.github/workflows/eval.yml` runs on every PR what needs no model: unit tests, the slice,
+the retrieval benchmarks against their floors, the authorities benchmark. The faithfulness
+gate runs locally against Ollama (numbers in `MEASUREMENTS.md`), or on dispatch with Claude.
 
 ## Layout
 
