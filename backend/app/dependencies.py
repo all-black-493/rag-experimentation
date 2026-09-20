@@ -12,7 +12,7 @@ def get_graph(request: Request) -> CompiledStateGraph:
 
 
 def get_catalog(request: Request) -> Catalog:
-    return request.app.state.catalog
+    return request.app.state.catalog.current()
 
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]

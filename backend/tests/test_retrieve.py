@@ -139,3 +139,27 @@ def test_the_original_is_not_duplicated_when_the_plan_already_uses_it(monkeypatc
     run(monkeypatch, plan, search)
 
     assert search.calls == [("case_law", "q", False)]
+
+
+def test_workers_inherit_the_request_context(monkeypatch):
+    """Trace spans live in contextvars; a worker without the request's context would
+    open its retriever span outside the request's trace."""
+    import contextvars
+
+    marker: contextvars.ContextVar[str] = contextvars.ContextVar("marker", default="unset")
+    seen: list[str] = []
+
+    class RecordingSearch(FakeSearch):
+        def __call__(self, *args, **kwargs):
+            seen.append(marker.get())
+            return super().__call__(*args, **kwargs)
+
+    marker.set("request")
+    plan = QueryPlan(
+        sub_queries=[SubQuery(query="a", collection="case_law"), SubQuery(query="b", collection="legislation")],
+        rationale="r",
+    )
+
+    run(monkeypatch, plan, RecordingSearch({}))
+
+    assert seen and all(value == "request" for value in seen)

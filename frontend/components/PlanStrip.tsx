@@ -10,6 +10,8 @@ interface Props {
   plan: Plan | null;
   retrieval: SubQueryOutcome[];
   courtNames: Map<string, string>;
+  // After the verdict: whether the answer stood.
+  grounded?: boolean | null;
 }
 
 const STATUS: Record<Exclude<Phase, "idle" | "done">, string> = {
@@ -24,7 +26,7 @@ const STATUS: Record<Exclude<Phase, "idle" | "done">, string> = {
  * dashboard: collections, any court or year restriction, and whether the
  * planner's own restriction had to be relaxed.
  */
-export function PlanStrip({ phase, mode, plan, retrieval, courtNames }: Props) {
+export function PlanStrip({ phase, mode, plan, retrieval, courtNames, grounded }: Props) {
   if (phase === "idle") return null;
 
   const outcomes = retrieval.length
@@ -55,6 +57,9 @@ export function PlanStrip({ phase, mode, plan, retrieval, courtNames }: Props) {
         <span className="text-ink-3">
           · {relaxed === 1 ? "a restriction was" : `${relaxed} restrictions were`} widened to find enough
         </span>
+      )}
+      {phase === "done" && mode === "ask" && grounded === true && (
+        <span className="text-ok">· verified against its sources</span>
       )}
       {plan?.origin === "fallback" && phase === "done" && (
         <span className="text-ink-3">· planner unavailable, searched everything in scope</span>

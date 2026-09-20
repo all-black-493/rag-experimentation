@@ -6,14 +6,15 @@ original question scored 100% recall@5 and the planner's paraphrases alone
 97.2% - a rewrite loses the exact wording keyword search matches on. Adding the
 original back makes the plan pure expansion: it can find more, never less.
 
-Sequential rather than parallel on purpose. Each sub-query is one local
-embedding (~15ms) and one Weaviate round trip, so four of them cost well under
-a second - and the trace stays honest, because the active span lives in
-thread-local context and nested observations opened on worker threads would
-not attach to the request's trace.
+The sub-queries run in parallel. Each worker inherits the request's context
+(`contextvars.copy_context`) - the active trace span lives there - so the
+retriever observations still nest under the request. Results are merged in
+plan order regardless of which finished first, so the pool is deterministic.
 """
 
+import contextvars
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -80,10 +81,9 @@ def retrieve(
 ) -> dict:
     plan = state["plan"]
     user = state["user_filters"]
+    searches = _with_original(plan.sub_queries, state["question"])
 
-    pooled: dict[tuple, Document] = {}
-    results: list[SubQueryResult] = []
-    for sub in _with_original(plan.sub_queries, state["question"]):
+    def run_one(sub: SubQuery) -> tuple[list[Document], SubQueryResult]:
         effective = merge(user, sub.filters())
         with observation(
             as_type="retriever",
@@ -108,16 +108,27 @@ def retrieve(
                 output=[traceable(doc) for doc in documents],
                 metadata={"retrieved": len(documents), "relaxed": relaxed},
             )
-
-        results.append(
-            SubQueryResult(
-                query=sub.query,
-                collection=sub.collection,
-                filters=applied.narrowing(),
-                retrieved=len(documents),
-                relaxed=relaxed,
-            )
+        return documents, SubQueryResult(
+            query=sub.query,
+            collection=sub.collection,
+            filters=applied.narrowing(),
+            retrieved=len(documents),
+            relaxed=relaxed,
         )
+
+    # One context copy per worker, taken here on the request thread: a copy
+    # made inside the worker would be of the worker's empty context, and one
+    # shared copy can't be entered by several threads at once.
+    contexts = [contextvars.copy_context() for _ in searches]
+    with ThreadPoolExecutor(max_workers=len(searches)) as pool:
+        outcomes = list(
+            pool.map(lambda pair: pair[0].run(run_one, pair[1]), zip(contexts, searches, strict=True))
+        )
+
+    pooled: dict[tuple, Document] = {}
+    results: list[SubQueryResult] = []
+    for documents, result in outcomes:
+        results.append(result)
         # First occurrence wins: a chunk two sub-queries both found keeps the
         # position the earlier one gave it. The reranker re-scores everything
         # against the original question anyway.

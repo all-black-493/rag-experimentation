@@ -13,7 +13,7 @@ from app.config import get_settings
 from app.proxy_auth import require_proxy_secret
 from app.rate_limit import limiter
 from app.resilience import CircuitBreaker
-from app.retrieval.catalog import build_catalog
+from app.retrieval.catalog import CatalogHolder
 from app.retrieval.graph import build_graph
 from app.retrieval.pairwise import PairwiseReranker
 from app.retrieval.reranker import build_reranker, warm_reranker
@@ -47,6 +47,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         timeout=settings.external_timeout_seconds,
         max_retries=settings.external_max_retries,
     )
+    planner = ChatAnthropic(
+        model=settings.planner_model,
+        anthropic_api_key=settings.anthropic_api_key,
+        timeout=settings.external_timeout_seconds,
+        max_retries=settings.external_max_retries,
+    )
     # Same model, no cache: a cached verdict would pin one sampled judgment on
     # one answer forever, which is how a good answer was declined every time.
     verifier = llm.model_copy(update={"cache": False})
@@ -58,9 +64,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     with weaviate_client(settings) as client:
         ensure_collections(client)
-        # Inspected once: the corpus only changes through the ingest CLI, and a
-        # restart is the documented way to pick that up.
-        catalog = build_catalog(client)
+        # Rebuilt on a TTL, so an ingest in another process shows up without a
+        # restart. Built once here so the first request doesn't pay for it.
+        catalog = CatalogHolder(client, settings.catalog_refresh_seconds)
+        catalog.current()
         app.state.catalog = catalog
         app.state.graph = build_graph(
             client=client,
@@ -69,9 +76,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             llm=llm,
             catalog=catalog,
             settings=settings,
+            planner=planner,
             verifier=verifier,
             rerank_breaker=rerank_breaker,
             retrieval_cache=TTLCache(settings.retrieval_cache_ttl_seconds),
+            plan_cache=TTLCache(settings.retrieval_cache_ttl_seconds),
             pairwise=pairwise,
         )
         try:

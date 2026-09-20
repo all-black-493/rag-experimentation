@@ -72,4 +72,6 @@ def verify(state: GraphState, llm: BaseChatModel) -> dict:
 
 
 def decline(state: GraphState) -> dict:
-    return {"answer": DECLINE_MESSAGE, "documents": [], "grounded": False}
+    # `grounded` is left as the verifier set it (or None if it never ran), so
+    # callers can tell a withdrawn answer from one that was never generated.
+    return {"answer": DECLINE_MESSAGE, "documents": []}

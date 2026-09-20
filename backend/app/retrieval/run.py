@@ -41,7 +41,13 @@ class QueryOutcome:
 
 @dataclass(frozen=True)
 class StreamEvent:
-    """One server-sent event: `plan`, `sources`, `token`, `done` or `error`."""
+    """One server-sent event: `plan`, `sources`, `token`, `done`, `verdict` or `error`.
+
+    `done` carries the answer once it is final; `verdict` follows with the
+    groundedness judgment, and withdraws the answer if it failed. Splitting
+    them lets the reader start on the answer while the verifier runs, instead
+    of staring at a finished answer for three more seconds.
+    """
 
     event: str
     data: Any
@@ -54,7 +60,7 @@ def initial_state(question: str, mode: Mode, filters: LegalFilters) -> GraphStat
         "user_filters": filters,
         "documents": [],
         "answer": "",
-        "grounded": False,
+        "grounded": None,
     }
 
 
@@ -89,14 +95,12 @@ def _finalize(state: GraphState, mode: Mode, question: str, root) -> QueryOutcom
     if stripped:
         logger.warning("stripped invalid citation markers %s", stripped)
     outcome.answer = cleaned
-    outcome.grounded = bool(state.get("grounded"))
     report = citation_coverage(cleaned, len(documents))
 
     root.update(
         output={"answer": cleaned, "citations": len(documents)},
         metadata={
             **metadata,
-            "grounded": outcome.grounded,
             "declined": not answered,
             "cited_indices": report.cited_indices,
             "unused_citations": report.unused_citations,
@@ -108,13 +112,26 @@ def _finalize(state: GraphState, mode: Mode, question: str, root) -> QueryOutcom
     root.score_trace(name="answered", value=answered, data_type="BOOLEAN")
     if answered:
         root.score_trace(name="citation_coverage", value=report.coverage, data_type="NUMERIC")
-        root.score_trace(name="grounded", value=outcome.grounded, data_type="BOOLEAN")
         # A marker pointing at a citation that doesn't exist is the model
         # inventing a reference, which coverage alone would score as a hit.
         root.score_trace(
             name="invalid_citations", value=float(len(stripped)), data_type="NUMERIC"
         )
     return outcome
+
+
+def _score_verdict(state: GraphState, root) -> dict:
+    """Record the groundedness verdict on the trace; the event for the client."""
+    grounded = bool(state.get("grounded"))
+    withdrawn = not grounded
+    root.update(metadata={"grounded": grounded})
+    root.score_trace(name="grounded", value=grounded, data_type="BOOLEAN")
+    return {
+        "grounded": grounded,
+        "withdrawn": withdrawn,
+        # What replaces the answer when it's withdrawn.
+        "answer": state["answer"] if withdrawn else None,
+    }
 
 
 def run_query(
@@ -131,7 +148,12 @@ def run_query(
             root.score_trace(name="failed", value=True, data_type="BOOLEAN")
             raise
         root.score_trace(name="failed", value=False, data_type="BOOLEAN")
-        return _finalize(state, mode, question, root)
+        outcome = _finalize(state, mode, question, root)
+        # The verifier only runs after an answer was generated; a decline for
+        # lack of passages never reaches it and has no verdict to report.
+        if state.get("grounded") is not None:
+            outcome.grounded = _score_verdict(state, root)["grounded"]
+        return outcome
 
 
 def stream_query(
@@ -141,13 +163,15 @@ def stream_query(
 
     Node outputs arrive as `updates`; generation tokens as `messages`, filtered
     to the generate node so the planner's and verifier's own model calls don't
-    leak into the answer. The final `done` carries the finalized outcome - the
-    streamed tokens are a preview, the outcome is authoritative.
+    leak into the answer. `done` fires as soon as the answer is final - the
+    streamed tokens were a preview, this is authoritative - and `verdict`
+    follows once the verifier has judged it.
     """
     with trace(name="rag-query", session_id=mode, input={"question": question}) as root:
         handler = build_callback_handler()
         config = {"callbacks": [handler]} if handler else {}
         state = initial_state(question, mode, filters)
+        answered = False
         try:
             for kind, payload in graph.stream(
                 state, config=config, stream_mode=["updates", "messages"]
@@ -161,6 +185,9 @@ def stream_query(
                             yield StreamEvent(
                                 "sources", {"citations": build_citations(state["documents"])}
                             )
+                        elif node == "generate":
+                            answered = True
+                            yield StreamEvent("done", _finalize(state, mode, question, root))
                 elif kind == "messages":
                     chunk, metadata = payload
                     if metadata.get("langgraph_node") == "generate" and chunk.text:
@@ -171,7 +198,11 @@ def stream_query(
             yield StreamEvent("error", {"detail": str(exc)})
             return
         root.score_trace(name="failed", value=False, data_type="BOOLEAN")
-        yield StreamEvent("done", _finalize(state, mode, question, root))
+        if answered and state.get("grounded") is not None:
+            yield StreamEvent("verdict", _score_verdict(state, root))
+        elif not answered:
+            # Search mode, or a decline before any answer was generated.
+            yield StreamEvent("done", _finalize(state, mode, question, root))
 
 
 def _plan_payload(state: GraphState) -> dict:

@@ -44,6 +44,10 @@ class FakeGraph:
             yield ("messages", (AIMessageChunk(content="{grounded}"), {"langgraph_node": "verify"}))
             yield ("updates", {"generate": {"answer": self.answer}})
             yield ("updates", {"verify": {"grounded": self.grounded}})
+            if not self.grounded:
+                from app.retrieval.grounding import DECLINE_MESSAGE
+
+                yield ("updates", {"decline": {"answer": DECLINE_MESSAGE, "documents": []}})
 
     def stream(self, state, config=None, stream_mode=None):
         yield from self._updates()
@@ -56,22 +60,37 @@ class FakeGraph:
         return state
 
 
-def test_ask_stream_emits_plan_sources_tokens_then_done():
+def test_ask_stream_emits_plan_sources_tokens_done_then_verdict():
     events = list(stream_query(FakeGraph("ask"), "q", "ask", LegalFilters()))
 
-    assert [e.event for e in events] == ["plan", "sources", "token", "token", "token", "done"]
+    assert [e.event for e in events] == [
+        "plan", "sources", "token", "token", "token", "done", "verdict"
+    ]
     assert events[0].data["plan"]["sub_queries"][0]["query"] == "fine"
     assert [c["index"] for c in events[1].data["citations"]] == [1]
     assert "".join(e.data["text"] for e in events if e.event == "token") == "A fine applies [1]. Also [7]."
 
 
-def test_done_carries_the_enforced_answer_not_the_streamed_preview():
-    """[7] points past the one citation; the final answer must not contain it."""
-    done = list(stream_query(FakeGraph("ask"), "q", "ask", LegalFilters()))[-1].data
+def test_done_carries_the_enforced_answer_and_verdict_the_judgment():
+    """[7] points past the one citation; the final answer must not contain it.
+    The verdict arrives after, so the reader isn't kept waiting on the verifier."""
+    events = list(stream_query(FakeGraph("ask"), "q", "ask", LegalFilters()))
+    done = next(e for e in events if e.event == "done").data
+    verdict = events[-1].data
 
     assert done.answer == "A fine applies [1]. Also."
-    assert done.grounded is True
+    assert done.grounded is None
     assert len(done.citations) == 1
+    assert verdict == {"grounded": True, "withdrawn": False, "answer": None}
+
+
+def test_an_ungrounded_answer_is_withdrawn_by_the_verdict():
+    graph = FakeGraph("ask", grounded=False)
+    events = list(stream_query(graph, "q", "ask", LegalFilters()))
+
+    verdict = events[-1].data
+    assert verdict["grounded"] is False and verdict["withdrawn"] is True
+    assert "don't contain enough" in verdict["answer"]
 
 
 def test_search_stream_has_no_tokens_and_no_answer():
@@ -84,10 +103,20 @@ def test_search_stream_has_no_tokens_and_no_answer():
 
 def test_run_query_and_stream_query_agree():
     outcome = run_query(FakeGraph("ask"), "q", "ask", LegalFilters())
-    streamed = list(stream_query(FakeGraph("ask"), "q", "ask", LegalFilters()))[-1].data
+    events = list(stream_query(FakeGraph("ask"), "q", "ask", LegalFilters()))
+    done = next(e for e in events if e.event == "done").data
 
-    assert outcome.answer == streamed.answer
-    assert outcome.citations == streamed.citations
+    assert outcome.answer == done.answer
+    assert outcome.citations == done.citations
+    assert outcome.grounded is True
+
+
+def test_run_query_reports_a_withdrawn_answer():
+    outcome = run_query(FakeGraph("ask", grounded=False), "q", "ask", LegalFilters())
+
+    assert outcome.grounded is False
+    assert outcome.citations == []
+    assert "don't contain enough" in outcome.answer
 
 
 class ExplodingGraph(FakeGraph):

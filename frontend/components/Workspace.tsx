@@ -166,6 +166,7 @@ export function Workspace() {
                 plan={state.plan}
                 retrieval={state.retrieval}
                 courtNames={courtNames}
+                grounded={state.result?.grounded}
               />
             </div>
 
