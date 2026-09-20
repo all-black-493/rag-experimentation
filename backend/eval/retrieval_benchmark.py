@@ -30,6 +30,7 @@ import httpx
 EVAL_DIR = Path(__file__).resolve().parent
 DATASET = EVAL_DIR / "golden_dataset.jsonl"
 RELATIONSHIPS = EVAL_DIR / "golden_relationships.jsonl"
+TOPICS = EVAL_DIR / "golden_topics.jsonl"
 MATTER = EVAL_DIR / "golden_matter.jsonl"
 MATTER_FIXTURES = EVAL_DIR / "fixtures" / "matter"
 
@@ -172,10 +173,11 @@ def main() -> int:
     parser.add_argument("--label", default="search", help="name for this run in the output")
     parser.add_argument(
         "--set",
-        choices=["golden", "relationships", "both", "matter"],
+        choices=["golden", "relationships", "topics", "both", "matter"],
         default="golden",
         help="golden: single-document questions; relationships: graph-derived multi-document "
-        "ones; matter: the fixture documents, uploaded to a fresh matter first",
+        "ones; topics: thematic questions with phrase-defined document sets; matter: the "
+        "fixture documents, uploaded to a fresh matter first",
     )
     parser.add_argument(
         "--scope",
@@ -202,6 +204,7 @@ def main() -> int:
         sets = {
             "golden": [DATASET],
             "relationships": [RELATIONSHIPS],
+            "topics": [TOPICS],
             "both": [DATASET, RELATIONSHIPS],
         }
         dataset = [row for path in sets[args.set] for row in load_dataset(path)]

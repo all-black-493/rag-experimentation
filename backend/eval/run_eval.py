@@ -56,11 +56,35 @@ class SampleResult:
     # regression; treating them alike blocks merges on judge flakiness.
     error: str | None = None
     judge_error: str | None = None
+    # Wall clock of the /query call, as the user would experience it.
+    seconds: float | None = None
+
+
+def percentile(values: list[float], p: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round(p * (len(ordered) - 1))))
+    return ordered[index]
 
 
 @dataclass
 class Report:
     results: list[SampleResult] = field(default_factory=list)
+    # How the run was configured, so numbers are never read without their setup.
+    setup: dict = field(default_factory=dict)
+
+    @property
+    def latencies(self) -> list[float]:
+        return [r.seconds for r in self.results if r.seconds is not None and r.error is None]
+
+    @property
+    def p50_seconds(self) -> float | None:
+        return percentile(self.latencies, 0.5)
+
+    @property
+    def p95_seconds(self) -> float | None:
+        return percentile(self.latencies, 0.95)
 
     @property
     def answered(self) -> list[SampleResult]:
@@ -129,6 +153,7 @@ async def score_sample(
         source=row["source"],
     )
     async with semaphore:
+        started = time.monotonic()
         try:
             response = await client.post(
                 "/query", json={"question": row["question"], "mode": "ask"}
@@ -138,6 +163,7 @@ async def score_sample(
         except httpx.HTTPError as exc:
             result.error = f"query failed: {exc}"
             return result
+        result.seconds = time.monotonic() - started
 
         result.answer = payload["answer"] or ""
         # The parent window, because that is what the generator actually read;
@@ -205,11 +231,20 @@ async def run(args: argparse.Namespace) -> Report:
         tasks = [score_sample(client, faithfulness, row, semaphore) for row in dataset]
         results = await asyncio.gather(*tasks)
 
-    return Report(results=list(results))
+    setup = {"judge_model": args.judge_model, "api_url": args.api_url, "dataset": str(args.dataset)}
+    try:
+        health = await httpx.AsyncClient(base_url=args.api_url, timeout=10.0).get("/health")
+        setup.update(health.json())
+    except httpx.HTTPError:
+        pass
+    return Report(results=list(results), setup=setup)
 
 
 def write_report(report: Report, path: Path) -> None:
     payload = {
+        "setup": report.setup,
+        "p50_seconds": report.p50_seconds,
+        "p95_seconds": report.p95_seconds,
         "answer_rate": report.answer_rate,
         "mean_faithfulness": report.mean_faithfulness,
         "mean_citation_coverage": report.mean_citation_coverage,
@@ -226,6 +261,9 @@ def write_report(report: Report, path: Path) -> None:
 def print_summary(report: Report, thresholds: argparse.Namespace) -> bool:
     print(f"\n{len(report.results)} questions, {len(report.answered)} answered, "
           f"{len(report.errored)} errored")
+    if report.p50_seconds is not None:
+        print(f"latency:           p50 {report.p50_seconds:.1f}s   p95 {report.p95_seconds:.1f}s "
+              f"(wall clock per /query, {report.setup.get('provider', 'provider unknown')})")
     print(f"answer rate:       {report.answer_rate:.2%} "
           f"(threshold {thresholds.min_answer_rate:.2%})")
 

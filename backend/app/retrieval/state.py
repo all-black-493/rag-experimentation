@@ -32,8 +32,9 @@ class GraphState(TypedDict):
     user_filters: LegalFilters
     plan: NotRequired[QueryPlan]
     retrieval: NotRequired[list[SubQueryResult]]
-    # What the citation graph contributed, for the trace and the API.
+    # What the citation graph and the topic tree contributed, for the trace and the API.
     expansion: NotRequired[dict]
+    topics: NotRequired[dict]
     # Research mode: passes of retrieval completed, what the last review found
     # wanting, and the follow-up searches it asked for (consumed by the next pass).
     rounds: NotRequired[int]

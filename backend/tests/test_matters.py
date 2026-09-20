@@ -274,13 +274,14 @@ def test_ingest_indexes_then_profiles_and_survives_a_profile_failure(tmp_path, m
 
     assert indexed == 2
     assert client.tenants_created == [matter.id]
-    assert client.tenants_used == [matter.id]
+    assert client.tenants_used[0] == matter.id
     assert len(client.data.inserted) == 2
     assert client.data.inserted[1].properties["page"] == 2
     record = store.get(matter.id).document(doc_id)
     assert record.status == "indexed" and record.chunks == 2 and record.pages == 2
-    # Searchable regardless; the missing profile says why.
+    # Searchable regardless; the missing profile says why, and so does the missing tree.
     assert record.profile is None and "401" in record.profile_error
+    assert store.get(matter.id).topics == 0 and store.get(matter.id).topics_error
 
 
 def test_ingest_marks_a_document_failed_when_nothing_can_be_read(tmp_path):

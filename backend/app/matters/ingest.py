@@ -23,6 +23,7 @@ from app.matters.enrich import profile_document
 from app.matters.pdf import page_count
 from app.matters.store import MatterStore
 from app.metadata import CLASS_NAMES, MATTER
+from app.tree.build import build_matter_tree
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,16 @@ def ingest(
         try:
             profile = profile_document(profiler, document.name, text)
             store.update_document(matter_id, doc_id, profile=profile, profile_error=None)
+            logger.info("profiled %s in %s as %s", document.name, matter_id, profile.document_type)
         except Exception as exc:  # noqa: BLE001 - any provider failure is recorded, not raised
             logger.warning("profile failed for %s in %s: %s", document.name, matter_id, exc)
             store.update_document(matter_id, doc_id, profile_error=str(exc))
+        # The matter's topics span its documents, so the tree is rebuilt whole.
+        try:
+            count = build_matter_tree(client, embeddings, profiler, matter_id)
+            store.set_topics(matter_id, count)
+            logger.info("topic tree for %s: %d nodes", matter_id, count)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("topic tree failed for %s: %s", matter_id, exc)
+            store.set_topics(matter_id, 0, error=str(exc))
     return len(chunks)

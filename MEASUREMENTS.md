@@ -325,3 +325,131 @@ roles), facts anchored to the right page (the golden matter set's 20 answers dou
 facts), the chronology's dates (11 dated events across the three documents), and whether the
 one genuine contradiction — the letter's "no rent received for May–August" against the
 statement's "KSh 513,600 held in escrow since 5 August" — is found and cited to both sides.
+
+
+---
+
+## 2026-09-20 · Step 6, eval growth — the sets
+
+| set | questions | ground truth | scored on |
+|---|---|---|---|
+| `golden_dataset.jsonl` | 36 | one document | recall@5, MRR, nDCG |
+| `golden_relationships.jsonl` | 10 | 30–43 documents each, from the citation graph | + P@5 |
+| `golden_matter.jsonl` | 20 | one document and a page | + page@5 |
+| `golden_authorities.jsonl` | 3 documents | the citations each makes, and whether the corpus holds them | found / resolved / anchored |
+| `golden_topics.jsonl` | 8 | 7–23 judgments each, every one containing the theme's phrases | recall@5, MRR, P@5 |
+
+77 questions in all. The topic set's baseline, planner off, citation-graph expansion on, no
+topic tree yet:
+
+| `--set topics` | recall@5 | MRR | nDCG@5 | P@5 |
+|---|---|---|---|---|
+| hybrid + graph expansion (no tree) | 87.5% | 0.875 | 0.875 | 70.0% |
+
+Four themes were dropped by their own rule — fewer than five judgments contain the phrases
+(defilement + age assessment: 4; distress for rent: 4; dying declaration: 1; trial within a
+trial + confession: 1). The bar is deliberate: a set of four is a lookup, not a theme.
+
+`run_eval.py` now records p50/p95 wall clock per `/query` and the provider and models that
+answered (from `/health`), in the report and on the console.
+
+---
+
+## 2026-09-20 · Local models (PR #15, `ollama`)
+
+### The machine
+
+No GPU. 8 cores, 15.6 GB RAM, a 2 GB swap file — **already full** before Ollama starts:
+Weaviate, the API (torch, two local models), and unrelated containers (a k3d cluster,
+MSSQL, Kafka, Postgres) leave ~1 GB available. The host's own Ollama is 0.5.7 (too old for
+Qwen3: `412 requires a newer version`), so the compose service (`ollama/ollama`, 0.34.2)
+runs it, CPU only. Pulling: the image 5.5 GB, `qwen3:8b` 5.2 GB, at 1.9–2.5 MB/s.
+
+### Raw speed, `qwen3:8b`, thinking off
+
+| call | prompt tokens | prompt eval | generation |
+|---|---|---|---|
+| "Say ready.", first load | 19 | 13.6 tok/s | 4.8 tok/s (load 11 s) |
+| 2,064-token prompt, `num_ctx` 8192 | 2,064 | 9.2 tok/s | 2.4 tok/s |
+| 2,064-token prompt, `num_ctx` 16384 | 2,064 | 8.4 tok/s | 2.6 tok/s |
+| the planner, cold | 534 | 2.6 tok/s | 2.4 tok/s |
+| generation (5 parent windows) | 2,344 | 7.5 tok/s | 1.8 tok/s |
+| verify | 2,209 | 7.9 tok/s | 2.0 tok/s |
+
+Context size barely matters; memory does. With swap full, the weights page in and out
+under every call.
+
+### One uncached ask, whole pipeline (`latency_probe.py`, planner on)
+
+| point | Sonnet + Haiku (2026-09-19 baseline) | qwen3:8b, this CPU |
+|---|---|---|
+| plan | 7.1 s | 253.7 s |
+| sources | 9.4 s | 256.3 s |
+| first token | 10.6 s | 570.9 s |
+| last token | 20.8 s | 598.9 s |
+| verified | 23.4 s | 933.6 s |
+
+The pipeline is intact end to end on a local model — planner, generation and verifier all
+returned, structured output included — and it takes **15.6 minutes**, of which retrieval
+and reranking are 2.6 s. On this hardware the local path is for measuring correctness in
+the background, not for sitting in front of. A GPU, or a machine that isn't already
+swapping, changes the arithmetic by an order of magnitude; the code does not change.
+
+Worth knowing: the planner prompt is 580 tokens (catalog 178, a matter's documents 81);
+the generation prompt with five parent windows ~2,300; a memo's twelve would be ~5,500.
+
+### The model-driven steps, run on `qwen3:8b` (the first time they have run at all)
+
+The matter fixtures, uploaded to a fresh matter with the local model answering every call.
+Wall clock is on this swapping CPU; the same calls on Haiku/Sonnet are seconds each.
+
+**Profiles (Step 3), 3 of 3 documents.** Types "Demand Letter", "Lease Agreement", a
+witness statement; parties with roles (landlord, tenant, the advocates); dates (lease
+signed 3 Feb 2024, commencing 1 Mar 2024, expiring 28 Feb 2029; demand 12 Aug 2025). One
+profile call: 1,417-token prompt, 364-token output, 5.3 min. (The third profile showed as
+missing in the first read of the record: a document is `indexed` before it is profiled,
+and the script read it in between. Both writes are now logged.)
+
+**Matter topic tree (Step 4b).** 3 nodes over 23 passages, rebuilt after each upload,
+titles the model wrote: *Lease Termination and Rent Arrears Notice* (7 passages, 2
+documents), *Lease Terms and Arrears Notice* (6, 2), *Legal Letter Closing and Client CC*
+(1). Upload to indexed, profiled and treed: 1,311 s for the three documents.
+
+**Case analysis (Step 5).** Against the measurements planned for it:
+
+| what | planned check | result |
+|---|---|---|
+| parties | 6 named roles in the fixtures | 6 found, all with roles, all anchored to a passage |
+| facts | anchored to the right page | 47 facts, 47 anchored (100%); e.g. rent KSh 120,000 → passage 6, interest 14% → passage 7 |
+| chronology | 11 dated events | 24 events, all dated and ordered (3 Feb 2024 → Sept 2025) |
+| issues | — | 5 (re-entry for arrears, liability for the leaking roof, the third party in the shop, the changed locks, rent into escrow) |
+| contradictions | the one genuine one: "no rent received May–August" vs "KSh 513,600 in escrow" | 2 reported, both cited to both sides: the letter's 12 Aug date vs the 20 Aug receipt (genuine); the rent review as a fixed figure vs as 7% a year (not a conflict). **The escrow contradiction was not found.** |
+| research questions | — | 5, each searchable as written ("Under the Distress for Rent Act, what are the procedures and limitations on a landlord's right…") |
+| authorities (deterministic) | 3/3 | 3/3, as before |
+| report | headings, every fact cited | 13,784 characters under Parties / Facts / Chronology / Issues / Authorities cited / Contradictions / Next steps, `[n]` on every fact |
+| warnings | — | none |
+
+Calls: extraction of the three documents 8.1, 30.0 and 25.5 min (the lease's 1,676-token
+output at 1.95 tok/s is why local output is now capped per role); synthesis and report
+~2 h each as logged, queue time included. A working file worth having, at the price of an
+afternoon on this hardware.
+
+**Research run (Step 4).** Started after the analysis; its three calls — review, memo,
+verify — logged at 9.9, 12.5 and 45.3 min. The session driving the probe ended before it
+could read the memo; the run itself completed inside the API.
+
+**Eval gate with the local judge.** Not run: at ~15 min an ask and ~10 a judgment, the
+36-question gate is ~15 hours here. `run_eval.py --judge-model ollama:qwen3:8b` is ready
+for a machine that can afford it.
+
+### Topic set, `golden_topics.jsonl` (Step 6)
+
+8 thematic questions whose ground truth is every judgment containing the theme's phrases
+(7–23 judgments each). Planner off, graph on, no corpus tree yet:
+
+| retrieval | recall@5 | MRR | nDCG@5 | P@5 |
+|---|---|---|---|---|
+| hybrid + citation graph, no tree | 87.5% | 0.875 | 0.875 | 70.0% |
+
+This is the baseline the corpus tree will be judged against. The tree needs ~5k summary
+calls a level over case law: hours on a paid model, days on this CPU; not built here.

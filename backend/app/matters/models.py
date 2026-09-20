@@ -56,6 +56,10 @@ class Matter(BaseModel):
     documents: list[MatterDocument] = Field(default_factory=list)
     # The last case analysis run over the documents, if one has been.
     analysis: CaseAnalysis | None = None
+    # Topic summaries over the documents (a RAPTOR tree, one level), rebuilt
+    # after each upload; how many, and why there are none when there are none.
+    topics: int = 0
+    topics_error: str | None = None
 
     def document(self, doc_id: str) -> MatterDocument | None:
         return next((d for d in self.documents if d.doc_id == doc_id), None)

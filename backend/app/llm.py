@@ -30,6 +30,11 @@ def build_chat_model(settings: Settings, role: Role) -> BaseChatModel:
             # Ollama's default window is a few thousand tokens; a generation
             # prompt carries five parent windows, a memo's twelve.
             num_ctx=settings.ollama_num_ctx,
+            num_predict=(
+                settings.ollama_num_predict
+                if role == "generation"
+                else settings.ollama_num_predict_fast
+            ),
             # Thinking models think by default and put it in the text. Off
             # unless asked: on a CPU it doubles every call, and the planner and
             # reviewer produce JSON, not reasoning.

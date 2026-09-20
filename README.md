@@ -93,10 +93,10 @@ then the file and the record. Originals live under `data/matters/<id>/`.
 ## Retrieval
 
 ```
-plan → retrieve → expand → rerank → [search]   END
-                                  → [ask]      generate → verify → END / decline
-                                  → [research] review → (follow-ups) retrieve …
-                                                      → generate → verify → END / decline
+plan → retrieve → expand → topics → rerank → [search]   END
+                                           → [ask]      generate → verify → END / decline
+                                           → [research] review → (follow-ups) retrieve …
+                                                               → generate → verify → END / decline
 ```
 
 - **plan** (`retrieval/planner.py`) — one structured call to a small fast model
@@ -120,6 +120,15 @@ plan → retrieve → expand → rerank → [search]   END
   tagged with why it is there (`via: "applies section 8(1) of the Sexual Offences Act"`).
   The reranker still decides, over a pool no larger than before.
   `GRAPH_EXPANSION_ENABLED=false` switches it off.
+- **topics** (`retrieval/topics.py`, off until a tree exists) — RAPTOR's collapsed-tree
+  search over summary nodes (`app/tree/`): the question is searched against topic summaries
+  of the corpus and of the matter; a node that matches contributes the leaf passages beneath
+  it, tagged `topic: …`, under the same candidate budget. A summary is never a citation.
+- **topics** (`retrieval/topics.py`) — a summary tree (RAPTOR, below) widens the pool by
+  theme: the question is searched against the tree's nodes, and each node that matches hands
+  over the passages beneath it, tagged `topic: …`. A summary is never a citation; the leaves
+  are what a query gets, under the same candidate budget as the graph. Off until a tree has
+  been built (`TOPICS_ENABLED`).
 - **rerank** — a local cross-encoder scores every candidate (title + passage) against the
   *original* question; a threshold, which the user's own documents are exempt from, and a
   per-mode cut (5 for ask, 10 for search).
@@ -152,6 +161,29 @@ corpus doesn't hold; they are recorded anyway, unresolved, because "which judgme
 what a document cites and what cites it. LLM entity extraction (LightRAG-style) was
 rejected for the corpus: one call per chunk is ~85k calls for relationships that are
 written in a recognisable form anyway.
+
+### Topic tree
+
+`app/tree/` builds a RAPTOR tree (arXiv 2401.18059) kept to what the corpus needs: the
+indexed passages and their stored vectors are clustered (a Gaussian mixture on the 384-d
+embeddings, the number of clusters by BIC around a target size of ten), each cluster is
+summarised in one model call, the summaries are embedded, and a second level clusters the
+first. Every node points at the leaf passages beneath it, so a hit hands retrieval real
+passages; the summary text is navigation, never evidence. `python -m app.tree.build --matter
+<id>` builds a matter's tree — also rebuilt after every upload, a few calls — and
+`--collection case_law --docs N --levels 2` the corpus's, which at ~5k calls per level is
+work for a paid model or a GPU, not a CPU. `TOPICS_ENABLED=true` turns the node on.
+
+### Topic tree
+
+`app/tree/` is RAPTOR (arXiv 2401.18059) kept to what this corpus needs: passages are
+clustered by their stored embeddings (Gaussian mixtures, the count chosen by BIC around a
+target cluster size — no UMAP, the vectors are already small), each cluster is summarised by
+one model call, the summaries are embedded and clustered again for the next level. Nodes live
+in a `Summary` collection, one tenant per tree: the corpus's, and each matter's, rebuilt
+after every upload (a 25-passage matter is two or three calls). `python -m app.tree.build
+--collection case_law --docs N --levels 2` builds the corpus's, which at ~5k clusters a level
+is a job for a paid model or a GPU. Summaries are navigation, never evidence.
 
 ### Measured
 
@@ -200,6 +232,10 @@ low even when its ranking of them is right, and three questions were returning n
 
 On the single-document golden set the expansion changes nothing (100% / 0.968 / 0.976
 either way): it only widens the pool, and the reranker keeps what was already right.
+
+`golden_topics.jsonl` holds 8 thematic questions ("how have courts treated …") whose
+ground truth is every judgment containing the theme's phrases; without a corpus tree,
+retrieval scores recall@5 87.5%, MRR 0.875, P@5 70% on them — the topic tree's baseline.
 
 Latency: the graph itself is free, the cross-encoder is not (~70 ms per candidate on this
 CPU). Two things keep a relational search at the same ~2.1 s as any other. The pool handed
@@ -285,11 +321,19 @@ generations link to the version that produced them.
 - `fixtures/corpus_slice.json` — the golden documents plus 80 distractors (3.9 MB), what CI
   indexes; distractors are what let retrieval fail.
 - `run_eval.py` — the faithfulness gate: ragas faithfulness ≥ 0.8, answer rate ≥ 0.9,
-  citation coverage ≥ 0.8, zero invalid citations, no API errors.
+  citation coverage ≥ 0.8, zero invalid citations, no API errors; reports p50/p95 latency
+  per `/query` and the provider and models that answered, so a number is never read without
+  its setup. The judge can be Claude or a local model.
 - `retrieval_benchmark.py` — the tables above, in seconds, no judge; `--set golden |
   relationships | both | matter`.
 - `golden_relationships.jsonl` — 10 multi-document questions, generated from the citation
   graph by `build_relationship_questions.py`.
+- `golden_topics.jsonl` — 8 thematic questions ("how have courts treated …") whose ground
+  truth is every judgment containing the phrases that name the theme, from
+  `build_topic_questions.py`; what the topic tree is for.
+- `golden_topics.jsonl` — 8 thematic questions ("how have courts treated…") whose document
+  sets are defined by phrases every judgment in the set contains, by
+  `build_topic_questions.py`; what the topic tree exists for.
 - `golden_matter.jsonl` + `fixtures/matter/` — 20 questions over one matter's three
   documents, authored as Markdown and rendered to PDF by `build_matter_fixtures.py`.
 - `authorities_benchmark.py` + `golden_authorities.jsonl` — the case analysis's
@@ -305,18 +349,19 @@ backend/app/
   corpus/       documents (reconstruction), courts, chunking, splitting, parenting, ingest CLI
   vectorstore/  client, schema (explicit collections), search (hybrid), embeddings
   graph/        refs (extraction), resolve, edges, store (Weaviate + in-memory), build CLI
+  tree/         cluster (GMM by BIC), summarise, store (Summary collection), build CLI
   matters/      models, store (disk), pdf (blocks → page + box), loaders, chunking,
                 ingest (the job), enrich (profile), delete, catalog (for the planner)
   analysis/     models, chunks, sources (anchors), authorities, resolve, chronology,
                 extract (per document), synthesise (across them, and the report), run
-  retrieval/    catalog, plan (schema), planner (node), filters, retrieve, expand, rerank,
-                review, answer, grounding, citations, run (one query under one trace), graph
+  retrieval/    catalog, plan (schema), planner (node), filters, retrieve, expand, topics,
+                rerank, review, answer, grounding, citations, run (one query, one trace), graph
   workflows/    runs (a job with followable events), research, case_analysis
   api/          schemas, routes/{query,catalog,graph,matters,workflows}, streaming
   config, main, dependencies, jobs, proxy_auth, rate_limit, caching, resilience, scoring,
   tracing, metrics, prompts, prompt_sync
 backend/prompts/   planner, generation, review, memo, grounding, profile, extract, analysis,
-                   report, responses
+                   report, summary, responses
 backend/eval/      the harness above
 frontend/          app/ (layout, page, api proxy), components/, lib/ (types, api, stream, hook)
 ```
