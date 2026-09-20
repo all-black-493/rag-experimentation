@@ -397,3 +397,59 @@ swapping, changes the arithmetic by an order of magnitude; the code does not cha
 
 Worth knowing: the planner prompt is 580 tokens (catalog 178, a matter's documents 81);
 the generation prompt with five parent windows ~2,300; a memo's twelve would be ~5,500.
+
+### The model-driven steps, run on `qwen3:8b` (the first time they have run at all)
+
+The matter fixtures, uploaded to a fresh matter with the local model answering every call.
+Wall clock is on this swapping CPU; the same calls on Haiku/Sonnet are seconds each.
+
+**Profiles (Step 3), 3 of 3 documents.** Types "Demand Letter", "Lease Agreement", a
+witness statement; parties with roles (landlord, tenant, the advocates); dates (lease
+signed 3 Feb 2024, commencing 1 Mar 2024, expiring 28 Feb 2029; demand 12 Aug 2025). One
+profile call: 1,417-token prompt, 364-token output, 5.3 min. (The third profile showed as
+missing in the first read of the record: a document is `indexed` before it is profiled,
+and the script read it in between. Both writes are now logged.)
+
+**Matter topic tree (Step 4b).** 3 nodes over 23 passages, rebuilt after each upload,
+titles the model wrote: *Lease Termination and Rent Arrears Notice* (7 passages, 2
+documents), *Lease Terms and Arrears Notice* (6, 2), *Legal Letter Closing and Client CC*
+(1). Upload to indexed, profiled and treed: 1,311 s for the three documents.
+
+**Case analysis (Step 5).** Against the measurements planned for it:
+
+| what | planned check | result |
+|---|---|---|
+| parties | 6 named roles in the fixtures | 6 found, all with roles, all anchored to a passage |
+| facts | anchored to the right page | 47 facts, 47 anchored (100%); e.g. rent KSh 120,000 → passage 6, interest 14% → passage 7 |
+| chronology | 11 dated events | 24 events, all dated and ordered (3 Feb 2024 → Sept 2025) |
+| issues | — | 5 (re-entry for arrears, liability for the leaking roof, the third party in the shop, the changed locks, rent into escrow) |
+| contradictions | the one genuine one: "no rent received May–August" vs "KSh 513,600 in escrow" | 2 reported, both cited to both sides: the letter's 12 Aug date vs the 20 Aug receipt (genuine); the rent review as a fixed figure vs as 7% a year (not a conflict). **The escrow contradiction was not found.** |
+| research questions | — | 5, each searchable as written ("Under the Distress for Rent Act, what are the procedures and limitations on a landlord's right…") |
+| authorities (deterministic) | 3/3 | 3/3, as before |
+| report | headings, every fact cited | 13,784 characters under Parties / Facts / Chronology / Issues / Authorities cited / Contradictions / Next steps, `[n]` on every fact |
+| warnings | — | none |
+
+Calls: extraction of the three documents 8.1, 30.0 and 25.5 min (the lease's 1,676-token
+output at 1.95 tok/s is why local output is now capped per role); synthesis and report
+~2 h each as logged, queue time included. A working file worth having, at the price of an
+afternoon on this hardware.
+
+**Research run (Step 4).** Started after the analysis; its three calls — review, memo,
+verify — logged at 9.9, 12.5 and 45.3 min. The session driving the probe ended before it
+could read the memo; the run itself completed inside the API.
+
+**Eval gate with the local judge.** Not run: at ~15 min an ask and ~10 a judgment, the
+36-question gate is ~15 hours here. `run_eval.py --judge-model ollama:qwen3:8b` is ready
+for a machine that can afford it.
+
+### Topic set, `golden_topics.jsonl` (Step 6)
+
+8 thematic questions whose ground truth is every judgment containing the theme's phrases
+(7–23 judgments each). Planner off, graph on, no corpus tree yet:
+
+| retrieval | recall@5 | MRR | nDCG@5 | P@5 |
+|---|---|---|---|---|
+| hybrid + citation graph, no tree | 87.5% | 0.875 | 0.875 | 70.0% |
+
+This is the baseline the corpus tree will be judged against. The tree needs ~5k summary
+calls a level over case law: hours on a paid model, days on this CPU; not built here.

@@ -233,6 +233,10 @@ low even when its ranking of them is right, and three questions were returning n
 On the single-document golden set the expansion changes nothing (100% / 0.968 / 0.976
 either way): it only widens the pool, and the reranker keeps what was already right.
 
+`golden_topics.jsonl` holds 8 thematic questions ("how have courts treated …") whose
+ground truth is every judgment containing the theme's phrases; without a corpus tree,
+retrieval scores recall@5 87.5%, MRR 0.875, P@5 70% on them — the topic tree's baseline.
+
 Latency: the graph itself is free, the cross-encoder is not (~70 ms per candidate on this
 CPU). Two things keep a relational search at the same ~2.1 s as any other. The pool handed
 to the reranker never grows — graph passages displace the weakest hybrid candidates
