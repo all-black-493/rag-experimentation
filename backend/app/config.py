@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen3:8b"
     ollama_fast_model: str = "qwen3:8b"
     ollama_num_ctx: int = 16384
+    # Output caps. A local model at 2 tokens/s that keeps listing facts is a
+    # half-hour call; a structured output cut short fails to parse and the
+    # step records it, which is the better outcome.
+    ollama_num_predict: int = 3072
+    ollama_num_predict_fast: int = 1536
     ollama_reasoning: bool = False
     ollama_temperature: float = 0.2
     # Keep the weights loaded between calls; reloading 5 GB per request is

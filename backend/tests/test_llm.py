@@ -26,6 +26,7 @@ def test_ollama_uses_the_local_models_with_a_window_that_fits_a_memo():
     assert (generation.model, fast.model) == ("qwen3:14b", "qwen3:8b")
     assert generation.base_url == "http://ollama:11434"
     assert generation.num_ctx == 16384
+    assert (generation.num_predict, fast.num_predict) == (3072, 1536)
     # Thinking off: on a CPU it doubles every call, and structured output needs none of it.
     assert generation.reasoning is False
     # The verifier's uncached copy works on either provider.
