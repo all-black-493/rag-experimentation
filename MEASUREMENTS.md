@@ -352,3 +352,48 @@ trial + confession: 1). The bar is deliberate: a set of four is a lookup, not a 
 
 `run_eval.py` now records p50/p95 wall clock per `/query` and the provider and models that
 answered (from `/health`), in the report and on the console.
+
+---
+
+## 2026-09-20 · Local models (PR #15, `ollama`)
+
+### The machine
+
+No GPU. 8 cores, 15.6 GB RAM, a 2 GB swap file — **already full** before Ollama starts:
+Weaviate, the API (torch, two local models), and unrelated containers (a k3d cluster,
+MSSQL, Kafka, Postgres) leave ~1 GB available. The host's own Ollama is 0.5.7 (too old for
+Qwen3: `412 requires a newer version`), so the compose service (`ollama/ollama`, 0.34.2)
+runs it, CPU only. Pulling: the image 5.5 GB, `qwen3:8b` 5.2 GB, at 1.9–2.5 MB/s.
+
+### Raw speed, `qwen3:8b`, thinking off
+
+| call | prompt tokens | prompt eval | generation |
+|---|---|---|---|
+| "Say ready.", first load | 19 | 13.6 tok/s | 4.8 tok/s (load 11 s) |
+| 2,064-token prompt, `num_ctx` 8192 | 2,064 | 9.2 tok/s | 2.4 tok/s |
+| 2,064-token prompt, `num_ctx` 16384 | 2,064 | 8.4 tok/s | 2.6 tok/s |
+| the planner, cold | 534 | 2.6 tok/s | 2.4 tok/s |
+| generation (5 parent windows) | 2,344 | 7.5 tok/s | 1.8 tok/s |
+| verify | 2,209 | 7.9 tok/s | 2.0 tok/s |
+
+Context size barely matters; memory does. With swap full, the weights page in and out
+under every call.
+
+### One uncached ask, whole pipeline (`latency_probe.py`, planner on)
+
+| point | Sonnet + Haiku (2026-09-19 baseline) | qwen3:8b, this CPU |
+|---|---|---|
+| plan | 7.1 s | 253.7 s |
+| sources | 9.4 s | 256.3 s |
+| first token | 10.6 s | 570.9 s |
+| last token | 20.8 s | 598.9 s |
+| verified | 23.4 s | 933.6 s |
+
+The pipeline is intact end to end on a local model — planner, generation and verifier all
+returned, structured output included — and it takes **15.6 minutes**, of which retrieval
+and reranking are 2.6 s. On this hardware the local path is for measuring correctness in
+the background, not for sitting in front of. A GPU, or a machine that isn't already
+swapping, changes the arithmetic by an order of magnitude; the code does not change.
+
+Worth knowing: the planner prompt is 580 tokens (catalog 178, a matter's documents 81);
+the generation prompt with five parent windows ~2,300; a memo's twelve would be ~5,500.
