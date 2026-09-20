@@ -471,6 +471,11 @@ Floors sit under the measured numbers by about one question, the room the planne
 rewrites took on the full corpus (97.2% / 0.981). `retrieval_benchmark.py` gained
 `--min-recall`/`--min-mrr` for this; it had never failed a run.
 
+First run of the new gate (35514750003, 15 min): golden 100.0% / 1.000, matter 100.0% /
+0.950, authorities 3/3 found, 0 spurious, 3/3 anchored, 1.0 s. Resolution reads 1/3 there
+against 3/3 locally because the slice holds neither the Companies Act nor the Distress for
+Rent Act; the benchmark gates on found and spurious, which don't depend on the corpus.
+
 The faithfulness gate itself is a manual run: `run_eval.py --concurrency 1 --timeout 1800
 --resume` against the local stack (hours; `--resume` keeps each result in
 `report.partial.jsonl`, so a restart continues), or `workflow_dispatch` on CI with a
