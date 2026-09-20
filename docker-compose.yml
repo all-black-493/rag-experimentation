@@ -46,6 +46,7 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
       OLLAMA_FAST_MODEL: ${OLLAMA_FAST_MODEL:-qwen3:8b}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-16384}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
