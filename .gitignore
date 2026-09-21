@@ -7,6 +7,8 @@ __pycache__/
 *.egg-info/
 .playwright-mcp/
 backend/eval/report.json
+backend/eval/report.partial.jsonl
+backend/eval/gate.log
 backend/data/
 
 # The corpus is 75MB and obtained separately; see corpus/README.md

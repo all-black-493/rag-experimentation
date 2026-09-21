@@ -257,6 +257,9 @@ async def run(args: argparse.Namespace) -> Report:
         if args.resume:
             with partial.open("a") as handle:
                 handle.write(json.dumps(vars(result)) + "\n")
+            score = "-" if result.faithfulness is None else f"{result.faithfulness:.2f}"
+            seconds = "-" if result.seconds is None else f"{result.seconds:.0f}s"
+            print(f"  {result.id}: {seconds} faithfulness {score}", flush=True)
         return result
 
     async with httpx.AsyncClient(base_url=args.api_url, timeout=args.timeout) as client:
