@@ -6,9 +6,19 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 .playwright-mcp/
-eval/report.json
-/data/
+backend/eval/report.json
+backend/eval/report.partial.jsonl
+backend/eval/gate.log
+backend/data/
 
-# Cloudflare Pages local state and secrets
-.wrangler/
-.dev.vars
+# The corpus is 75MB and obtained separately; see corpus/README.md
+corpus/*
+!corpus/README.md
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.env*.local
+
+# ChatGPT notes kept locally, not part of the product
+response.md

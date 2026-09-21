@@ -21,54 +21,69 @@ services:
       retries: 10
       start_period: 10s
 
-  # Opt-in: `docker compose --profile scanning up -d`. Behind a profile because
-  # the signature database makes this image large and slow to become ready, and
-  # the eval workflow shouldn't pay that on every run. Set MALWARE_SCAN_ENABLED
-  # alongside it, or the app won't call the scanner.
-  clamav:
-    image: clamav/clamav:1.4
-    profiles: ["scanning"]
-    ports:
-      - "3310:3310"
-    healthcheck:
-      test: ["CMD", "clamdcheck.sh"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 180s
-
   app:
-    build: .
+    build: ./backend
     ports:
       - "8010:8000"
     env_file:
-      - .env
+      - ./backend/.env
     environment:
       WEAVIATE_HOST: weaviate
-      # Passed through explicitly: a shell-level MALWARE_SCAN_ENABLED is used for
-      # compose substitution only and never reaches the container, which silently
-      # leaves scanning off when you believe you turned it on.
-      MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-false}
-      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
-      # Same passthrough, for exercising the proxy gate locally.
+      # Passed through explicitly so the proxy gate can be exercised locally:
+      # a shell-level variable is used for compose substitution only and never
+      # reaches the container on its own.
       PROXY_SECRET: ${PROXY_SECRET:-}
+      # The agentic layer's switch, for the retrieval benchmark's baseline:
+      #   PLANNER_ENABLED=false docker compose up -d app
+      PLANNER_ENABLED: ${PLANNER_ENABLED:-true}
+      GRAPH_EXPANSION_ENABLED: ${GRAPH_EXPANSION_ENABLED:-true}
+      RERANK_WITH_TITLE: ${RERANK_WITH_TITLE:-true}
+      TOPICS_ENABLED: ${TOPICS_ENABLED:-false}
+      # Local models by default; LLM_PROVIDER=anthropic needs ANTHROPIC_API_KEY
+      # in backend/.env. A host Ollama instead of the service:
+      # OLLAMA_BASE_URL=http://host.docker.internal:11434.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      OLLAMA_FAST_MODEL: ${OLLAMA_FAST_MODEL:-qwen3:8b}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-16384}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - pdf_uploads:/app/data/uploads
-      # The caches have to outlive the container or they aren't caches. Without
-      # these, every `up --build` discards the embedding cache and the next
-      # ingest re-embeds content that was already paid for - which is how a
-      # month of provider quota disappears into repeated rebuilds.
+      # The embedding cache has to outlive the container or it isn't a cache:
+      # without this every `up --build` re-embeds the whole corpus.
       - embedding_cache:/app/data/embeddings
-      - favicon_cache:/app/data/favicons
-      - thumbnail_cache:/app/data/thumbnails
+      # Matters: the uploaded originals and each matter's record.
+      - matter_data:/app/data/matters
+      # The corpus, for the ingest CLI:
+      #   docker compose exec app python -m app.corpus.ingest /corpus/all_chunks.json
+      - ./corpus:/corpus:ro
     depends_on:
       weaviate:
         condition: service_healthy
     restart: on-failure
 
+  # Local models; `docker compose exec ollama ollama pull qwen3:8b` once. CPU by
+  # default; for an NVIDIA GPU add the device reservation below and install the
+  # NVIDIA Container Toolkit
+  # (https://github.com/ollama/ollama/blob/main/docs/docker.mdx).
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
 volumes:
   weaviate_data:
-  pdf_uploads:
+  matter_data:
   embedding_cache:
-  favicon_cache:
-  thumbnail_cache:
+  ollama_data:

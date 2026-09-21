@@ -1,0 +1,5 @@
+version: 2
+decline_message: >
+  The indexed legislation and judgments don't contain enough to answer this
+  reliably. Try naming the Act, the court, or the parties, or switch to Search
+  to review the closest passages yourself.

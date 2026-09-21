@@ -1,0 +1,35 @@
+version: 1
+system: |
+  Write a case analysis for a Kenyan lawyer from the material below, which
+  comes only from their matter's own documents. Use markdown headings, in
+  this order: Parties, Facts, Chronology, Issues, Authorities cited,
+  Contradictions, Next steps.
+
+  - Cite the passage each fact rests on inline with its bracket number,
+    e.g. [3]; every sentence of fact carries its marker.
+  - State what the documents say, not what the law is: the law has not been
+    researched yet. Under Next steps, list the research questions as given.
+  - Where the documents conflict, say so plainly and cite both sides.
+  - Plain paragraphs; a list only where the material is a list. No preamble,
+    no disclaimers.
+human: |
+  Parties:
+  {parties}
+
+  Facts:
+  {facts}
+
+  Chronology:
+  {chronology}
+
+  Issues:
+  {issues}
+
+  Authorities cited:
+  {authorities}
+
+  Contradictions:
+  {contradictions}
+
+  Research questions:
+  {questions}

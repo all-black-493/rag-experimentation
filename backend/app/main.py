@@ -1,0 +1,140 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from functools import partial
+from pathlib import Path
+
+from fastapi import FastAPI
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIASGIMiddleware
+
+from app.api.routes import catalog, graph, matters, query, workflows
+from app.caching import TTLCache, enable_llm_cache
+from app.config import get_settings
+from app.graph.store import ensure_citation_collection, load_graph
+from app.jobs import JobRegistry
+from app.llm import build_chat_model
+from app.matters.ingest import ingest
+from app.matters.store import MatterStore
+from app.proxy_auth import require_proxy_secret
+from app.rate_limit import limiter
+from app.resilience import CircuitBreaker
+from app.retrieval.catalog import CatalogHolder
+from app.retrieval.graph import build_graph
+from app.retrieval.pairwise import PairwiseReranker
+from app.retrieval.reranker import build_reranker, warm_reranker
+from app.tracing import configure_tracing, shutdown_tracing
+from app.tree.store import ensure_summary_collection
+from app.vectorstore.client import weaviate_client
+from app.vectorstore.embeddings import build_embeddings, warm_embeddings
+from app.vectorstore.schema import ensure_collections
+from app.workflows.runs import WorkflowRuns
+
+MATTERS_DIR = Path(__file__).resolve().parent.parent / "data" / "matters"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    settings = get_settings()
+    configure_tracing(settings)
+    if settings.llm_cache_enabled:
+        enable_llm_cache()
+
+    embeddings = build_embeddings(settings)
+    reranker = build_reranker(settings)
+    # Load both local models before serving, so the first query after a deploy
+    # doesn't pay for them inside the request.
+    warm_reranker(settings)
+    warm_embeddings(settings)
+    pairwise = (
+        PairwiseReranker(settings.pairwise_model, settings.pairwise_max_candidates)
+        if settings.pairwise_rerank_enabled
+        else None
+    )
+    llm = build_chat_model(settings, "generation")
+    planner = build_chat_model(settings, "fast")
+    # Same model, no cache: a cached verdict would pin one sampled judgment on
+    # one answer forever, which is how a good answer was declined every time.
+    verifier = llm.model_copy(update={"cache": False})
+    rerank_breaker = CircuitBreaker(
+        "rerank",
+        failure_threshold=settings.circuit_breaker_failures,
+        reset_seconds=settings.circuit_breaker_reset_seconds,
+    )
+
+    with weaviate_client(settings) as client:
+        ensure_collections(client)
+        # Rebuilt on a TTL, so an ingest in another process shows up without a
+        # restart. Built once here so the first request doesn't pay for it.
+        catalog = CatalogHolder(client, settings.catalog_refresh_seconds)
+        catalog.current()
+        app.state.catalog = catalog
+        # The citation graph is derived data built by `python -m app.graph.build`;
+        # loaded into memory here so a lookup during a request costs nothing.
+        ensure_citation_collection(client)
+        ensure_summary_collection(client)
+        citation_graph = load_graph(client)
+        app.state.citation_graph = citation_graph
+        # Matters: the store on disk, the job runner, and the one function an
+        # upload hands to it.
+        retrieval_cache = TTLCache(settings.retrieval_cache_ttl_seconds)
+        matter_store = MatterStore(MATTERS_DIR)
+        app.state.client = client
+        app.state.matters = matter_store
+        app.state.jobs = JobRegistry(max_concurrency=settings.ingest_concurrency)
+        app.state.retrieval_cache = retrieval_cache
+        app.state.ingest = partial(ingest, matter_store, client, embeddings, settings, planner)
+        # Reading a matter's documents is generation-grade work: the main model.
+        app.state.analyst = llm
+        # Workflows get their own job slots so a memo never waits behind an upload.
+        app.state.workflows = WorkflowRuns(JobRegistry(max_concurrency=settings.research_concurrency))
+        app.state.graph = build_graph(
+            client=client,
+            embeddings=embeddings,
+            reranker=reranker,
+            llm=llm,
+            catalog=catalog,
+            settings=settings,
+            citation_graph=citation_graph,
+            planner=planner,
+            verifier=verifier,
+            rerank_breaker=rerank_breaker,
+            retrieval_cache=retrieval_cache,
+            plan_cache=TTLCache(settings.retrieval_cache_ttl_seconds),
+            pairwise=pairwise,
+            matters=matter_store,
+        )
+        try:
+            yield
+        finally:
+            # Spans are buffered; without this a shutdown drops whatever hasn't
+            # been sent yet.
+            shutdown_tracing()
+
+
+app = FastAPI(title="Kenya Law RAG API", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_middleware(SlowAPIASGIMiddleware)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.include_router(query.router)
+app.include_router(catalog.router)
+app.include_router(graph.router)
+app.include_router(matters.router)
+app.include_router(workflows.router)
+
+
+@app.get("/health")
+@limiter.exempt
+def health() -> dict[str, str]:
+    """Alive, and which models answer: an eval report records this beside its numbers."""
+    settings = get_settings()
+    if settings.llm_provider == "ollama":
+        models = f"{settings.ollama_model} / {settings.ollama_fast_model}"
+    else:
+        models = f"{settings.generation_model} / {settings.planner_model}"
+    return {"status": "ok", "provider": settings.llm_provider, "models": models}
+
+
+# Registered last so it runs first: nothing above is reachable without the
+# secret, when one is configured.
+app.middleware("http")(require_proxy_secret)

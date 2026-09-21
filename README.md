@@ -1,405 +1,372 @@
-# RAG
+# Wakili
 
-Ingestion, hybrid Weaviate retrieval with reranking, citation-enforced generation, Langfuse
-tracing, and an offline faithfulness eval gate. Documents are isolated per browser session.
+Legal research over Kenyan legislation and case law. Every answer is built from passages the
+reader can open, and the system says what it consulted to build it.
+
+Three modes. **Search** returns the ranked passages themselves for review. **Ask** synthesises a
+grounded answer on top of them, cites each claim to a passage, verifies the answer against its
+sources, and declines rather than guesses. **Research** reads what the first pass found,
+searches again for what it missed and for the other side, and writes a memo. A planning step
+routes each question to legislation, case law, the user's own documents or all three, and
+infers court and year restrictions only when the question names them.
+
+Modelled on Weaviate's legal-RAG reference architecture — collections by document type, an
+agent that inspects the schema → routes → builds filtered queries → reranks → answers — but
+self-hosted: the agent is our own LangGraph, not Weaviate Cloud's Query Agent.
 
 ## Stack
 
 | | |
 |---|---|
-| **LangChain / LangGraph** | document loading; the retrieve → rerank → generate → verify graph |
-| **FastAPI** | HTTP API, also serves the UI |
-| **Weaviate** | vector store, multi-tenant, native hybrid (BM25 + vector) search |
-| **Cohere** | embeddings (`embed-v4.0`), reranking (`rerank-v3.5`) |
-| **Anthropic Claude** | answer generation, groundedness check |
-| **PyMuPDF** | bbox-aware PDF extraction, page thumbnails |
-| **Langfuse** | tracing and quality metrics |
-| **ragas** | offline faithfulness eval, gates CI (`eval/`) |
+| `backend/` | FastAPI · LangGraph · Weaviate (self-hosted) · local embeddings + cross-encoder · PyMuPDF · Ollama (Qwen3) or Claude · Langfuse |
+| `frontend/` | Next.js 16 · TypeScript · Tailwind v4 · a server-side proxy to the backend |
+| `corpus/` | 1,533 documents from new.kenyalaw.org: 543 Acts, 990 judgments across 7 courts (not committed, see `corpus/README.md`) |
 
-## Setup
+## Run
 
 ```bash
-cp .env.example .env   # fill in COHERE_API_KEY and ANTHROPIC_API_KEY
-docker compose up -d --build
+cp backend/.env.example backend/.env       # optional Langfuse keys
+docker compose up -d --build               # Weaviate + Ollama + API on :8010
+docker compose exec ollama ollama pull qwen3:8b       # ~5 GB, once
+docker compose exec app python -m app.corpus.ingest /corpus/all_chunks.json
+docker compose exec app python -m app.graph.build    # citation graph, ~1 min, no model calls
+docker compose restart app                 # catalog and graph are loaded at startup
+
+cd frontend && cp .env.example .env.local && npm install && npm run dev   # :3000
 ```
 
-Weaviate on `:8080`/`:50051`, API and UI on `:8010`, API docs at `/docs`.
+### Models
 
-Local iteration without rebuilding:
+Every model call goes to Ollama, so nothing costs anything per call. `OLLAMA_MODEL`
+(answers, memos, reports, the verifier) and `OLLAMA_FAST_MODEL` (planner, review, profiles,
+extraction) default to `qwen3:8b`; a machine with the memory can run `qwen3:14b` or
+`qwen3:30b` for the first. Thinking is off (`OLLAMA_REASONING`) — every structured call is
+JSON, not reasoning, and on a CPU thinking doubles the time. The context window is 16k
+(`OLLAMA_NUM_CTX`): a memo prompt carries twelve parent windows. An NVIDIA GPU needs the
+device reservation commented in `docker-compose.yml`; a host install instead of the service
+is `OLLAMA_BASE_URL=http://host.docker.internal:11434`.
 
-```bash
-uv sync
-docker compose up -d weaviate
-fastapi dev app/main.py
+`LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY` uses Claude instead (Sonnet to answer,
+Haiku to plan). One factory, `app/llm.py`, builds both roles for either provider; nothing
+downstream knows which it has.
+
+Ingest is idempotent per document and resumable; a document left half-indexed by an
+interrupted run is redone. Embedding is CPU-bound (~8 chunks/s here): the full corpus is
+~85k chunks, so the first ingest takes a couple of hours; re-runs come from the embedding
+cache.
+
+## Corpus
+
+The rows arrive as 800-character windows with a fixed 150-character overlap, cut mid-word
+four times out of five. Because the overlap is fixed, `app/corpus/documents.py` reconstructs
+every document losslessly (verified: all 63,603 windows found verbatim in their document,
+0 fallback joins) and re-chunks it with a sentence-aware, small-to-big splitter: 200-token
+children are what get embedded, matched and quoted; the window of neighbours around a child
+is what the model reads. Court, decision date, year enacted and point-in-time version are
+parsed from Kenya Law's URLs.
+
+Two Weaviate collections with explicit schemas (`app/vectorstore/schema.py`), not autoschema:
+`Legislation` (title, url, year enacted, version date) and `CaseLaw` (plus court code, court,
+decision date). No multi-tenancy — the corpus is shared. A third, `MatterDocument`, holds the
+user's own documents, one tenant per matter (below).
+
+## Matters
+
+A matter is the user's own file: the lease, the demand letter, the witness statement. Its
+documents are indexed beside the corpus and searched with it, so "what does the law say"
+and "what does my contract say" are one question.
+
+`POST /matters {name}` · `POST /matters/{id}/documents` (PDF, Word, text; validated on the
+request, indexed in the background, status on the matter) · `DELETE …/documents/{doc_id}` ·
+`GET …/files/{doc_id}` (the original, with range requests for the viewer). `POST /query`
+takes `matter_id`; the matter is then a third collection the planner can route to, told
+what each document is by a profile (summary, type, parties, dates) one model call reads off
+it after indexing. A PDF chunk never spans a page and carries the union box of its blocks,
+so a citation opens the page with the passage highlighted. Deletion removes chunks first,
+then the file and the record. Originals live under `data/matters/<id>/`.
+
+## Retrieval
+
+```
+plan → retrieve → expand → topics → rerank → [search]   END
+                                           → [ask]      generate → verify → END / decline
+                                           → [research] review → (follow-ups) retrieve …
+                                                               → generate → verify → END / decline
 ```
 
-All configuration is environment-driven — see `.env.example` for the full list.
+- **plan** (`retrieval/planner.py`) — one structured call to a small fast model
+  (`PLANNER_MODEL`, Haiku), cached per question + filters. Sees the catalog (built from the
+  live database: collections, courts and their counts, year bounds; refreshed on a TTL) and
+  returns 1–4 sub-queries, each aimed at one collection, with court/year filters only when
+  the question names them, plus a `relationships` flag for questions about how authorities
+  relate. Validated by Pydantic; bounded by the user's own filters, which it can narrow but
+  never widen; unknown court codes dropped. Falls back to one unfiltered query per
+  collection if the call fails. `PLANNER_ENABLED=false` forces the fallback.
+- **retrieve** (`retrieval/retrieve.py`) — hybrid BM25 + vector search per sub-query, in
+  parallel, filters pushed into Weaviate. The original question is always searched too,
+  once per collection the plan touches (see the numbers below). A sub-query whose planner
+  filter returns fewer than `MIN_CANDIDATES_PER_SUBQUERY` is re-run without it and marked
+  *relaxed*; the user's filters are never relaxed. Results are pooled and de-duplicated.
+- **expand** (`retrieval/expand.py`) — the citation graph widens the pool, in memory, in
+  milliseconds. An authority the question names (`Kaingu Elias Kasono v Republic`,
+  `section 8(1) of the Sexual Offences Act`) brings in the exact passages that cite it; a
+  relational question also brings in the best passage of each document one hop from the
+  top candidates. Bounded, filtered by the user's restrictions, and every added passage is
+  tagged with why it is there (`via: "applies section 8(1) of the Sexual Offences Act"`).
+  The reranker still decides, over a pool no larger than before.
+  `GRAPH_EXPANSION_ENABLED=false` switches it off.
+- **topics** (`retrieval/topics.py`, off until a tree exists) — RAPTOR's collapsed-tree
+  search over summary nodes (`app/tree/`): the question is searched against topic summaries
+  of the corpus and of the matter; a node that matches contributes the leaf passages beneath
+  it, tagged `topic: …`, under the same candidate budget. A summary is never a citation.
+- **topics** (`retrieval/topics.py`) — a summary tree (RAPTOR, below) widens the pool by
+  theme: the question is searched against the tree's nodes, and each node that matches hands
+  over the passages beneath it, tagged `topic: …`. A summary is never a citation; the leaves
+  are what a query gets, under the same candidate budget as the graph. Off until a tree has
+  been built (`TOPICS_ENABLED`).
+- **rerank** — a local cross-encoder scores every candidate (title + passage) against the
+  *original* question; a threshold, which the user's own documents are exempt from, and a
+  per-mode cut (5 for ask, 10 for search).
+- **review** (`retrieval/review.py`, research only) — one structured call over the reranked
+  passages: what do they not yet cover, and what would cut the other way? It returns up to
+  `RESEARCH_MAX_FOLLOW_UPS` follow-up searches, never one already run, within the user's
+  scope; those run as a second pass that adds to the pool rather than replacing it, and the
+  reranker judges old and new together. Bounded by `RESEARCH_MAX_ROUNDS` (2). A review that
+  fails costs the pass, not the memo.
+- **generate / verify** — a cited answer (or, in research, a memo under *Issue, Law,
+  Authorities, Analysis, Conclusion*), streamed, then a groundedness judgment delivered
+  after it as a separate verdict. The judge is a sampled model call and disagrees with
+  itself a few percent of the time, so a single "not grounded" gets one independent second
+  opinion; the answer is withdrawn only if both say so. The verifier is deliberately
+  uncached — a cached verdict pinned one unlucky judgment on a good answer for the life of
+  the process. Invalid `[n]` markers are stripped before the answer leaves; bracketed years
+  in neutral citations (`[2010] eKLR`) are not markers.
+
+### Citation graph
+
+`app/graph/` reads every chunk once and extracts what it cites with regular expressions —
+neutral citations (`[2025] KEMC 94 (KLR)`), case numbers (`Criminal Appeal No. 54 of 2010`),
+party names, `section N of the X Act`, Articles of the Constitution — and resolves each
+against the corpus's own titles. Every edge keeps its provenance (the chunk it sits in).
+Over the full corpus: 6,537 edges from 1,533 documents in under a minute, 3,180 resolved
+to an indexed document, zero model calls. Most cited cases are classic precedents the
+corpus doesn't hold; they are recorded anyway, unresolved, because "which judgments applied
+*Kasono*" is answered by the citing passages, not by the cited document. Edges live in a
+`Citation` collection and are loaded into memory at startup; `GET /graph/{doc_id}` returns
+what a document cites and what cites it. LLM entity extraction (LightRAG-style) was
+rejected for the corpus: one call per chunk is ~85k calls for relationships that are
+written in a recognisable form anyway.
+
+### Topic tree
+
+`app/tree/` builds a RAPTOR tree (arXiv 2401.18059) kept to what the corpus needs: the
+indexed passages and their stored vectors are clustered (a Gaussian mixture on the 384-d
+embeddings, the number of clusters by BIC around a target size of ten), each cluster is
+summarised in one model call, the summaries are embedded, and a second level clusters the
+first. Every node points at the leaf passages beneath it, so a hit hands retrieval real
+passages; the summary text is navigation, never evidence. `python -m app.tree.build --matter
+<id>` builds a matter's tree — also rebuilt after every upload, a few calls — and
+`--collection case_law --docs N --levels 2` the corpus's, which at ~5k calls per level is
+work for a paid model or a GPU, not a CPU. `TOPICS_ENABLED=true` turns the node on.
+
+### Topic tree
+
+`app/tree/` is RAPTOR (arXiv 2401.18059) kept to what this corpus needs: passages are
+clustered by their stored embeddings (Gaussian mixtures, the count chosen by BIC around a
+target cluster size — no UMAP, the vectors are already small), each cluster is summarised by
+one model call, the summaries are embedded and clustered again for the next level. Nodes live
+in a `Summary` collection, one tenant per tree: the corpus's, and each matter's, rebuilt
+after every upload (a 25-passage matter is two or three calls). `python -m app.tree.build
+--collection case_law --docs N --levels 2` builds the corpus's, which at ~5k clusters a level
+is a job for a paid model or a GPU. Summaries are navigation, never evidence.
+
+### Measured
+
+Every number ever produced, with what changed between one and the next, is in
+`MEASUREMENTS.md`. The current ones:
+
+`backend/eval/retrieval_benchmark.py` scores document-level recall of what search mode
+returns against the 36-question golden set, over the full corpus (84,429 chunks):
+
+| retrieval | recall@5 | MRR | nDCG@5 |
+|---|---|---|---|
+| original question only (`PLANNER_ENABLED=false`) | 100.0% | 0.968 | 0.976 |
+| planner's sub-queries only | 97.2% | 0.954 | 0.958 |
+| **planner + original question** (shipped) | **100.0%** | **0.981** | **0.986** |
+
+The planner's rewrites alone *lost* recall: a paraphrase drops the exact wording keyword
+search matches on. Kept as pure expansion — the original always searched, the plan adding
+to it — the layer improves ranking rather than costing recall. The golden set has no
+court- or year-constrained questions, so the planner's filtering isn't measured by it.
+
+`golden_relationships.jsonl` holds 10 questions the graph exists for — "which judgments
+have applied section 26 of the Civil Procedure Act?" — with every correct document derived
+from the graph itself (30–43 each). Planner off, so the graph is the only variable:
+
+| retrieval (`--set relationships`) | recall@5 | MRR | P@5 |
+|---|---|---|---|
+| hybrid search only | 80.0% | 0.750 | 72.0% |
+| **+ citation-graph expansion** (shipped) | **100.0%** | **0.950** | **94.0%** |
+
+`golden_matter.jsonl` holds 20 questions over three fixture documents (a lease, a demand
+letter, a witness statement, `eval/fixtures/matter/`) uploaded to a fresh matter. `--set
+matter` scores the document and the page:
+
+| `--set matter`, planner off | recall@5 | MRR | page@5 |
+|---|---|---|---|
+| whole corpus in scope (the document competes with 84k chunks of law) | 100.0% | 0.871 | 95.0% |
+| the matter alone | 100.0% | 0.900 | 100.0% |
+
+Two things the set changed. The cross-encoder now scores the document's **title with each
+passage** — a 200-token child seldom names its own document, and "what does the lease say"
+ranked a letter mentioning the lease above the lease itself; the same fix lifted the
+relationship set's P@5 from 90% to 94% and put the Sexual Offences Act back in the top five
+for a question about its section 8. And the **relevance floor no longer applies to the
+user's own documents**: the cross-encoder's absolute scores for a contract's clauses run
+low even when its ranking of them is right, and three questions were returning nothing.
+
+On the single-document golden set the expansion changes nothing (100% / 0.968 / 0.976
+either way): it only widens the pool, and the reranker keeps what was already right.
+
+`golden_topics.jsonl` holds 8 thematic questions ("how have courts treated …") whose
+ground truth is every judgment containing the theme's phrases; without a corpus tree,
+retrieval scores recall@5 87.5%, MRR 0.875, P@5 70% on them — the topic tree's baseline.
+
+Latency: the graph itself is free, the cross-encoder is not (~70 ms per candidate on this
+CPU). Two things keep a relational search at the same ~2.1 s as any other. The pool handed
+to the reranker never grows — graph passages displace the weakest hybrid candidates
+(`GRAPH_CANDIDATE_BUDGET`). And dotted leaders in award tables
+(`damages...........Ksh. 120,000`) tokenise one dot per token, padding a whole batch to
+512; they are collapsed for scoring only. Before both, the same question took 5–7 s.
 
 ## API
 
-| Endpoint | Notes |
-|---|---|
-| `POST /ingest/file` | Returns `202` with a job id and indexes in the background. Validation and the malware scan run first, synchronously, so a bad file still gets an immediate `400`. |
-| `POST /ingest/url` | `{"url": "..."}` — same, `202` plus a job id. |
-| `GET /ingest/jobs/{job_id}` | Job status: `queued`, `running`, `succeeded`, `failed`. Scoped to the session that created it; another session gets `404`. |
-| `POST /query` | `{"question": "..."}` → `{answer, citations}`. Inline `[1]`, `[2]` markers match `citations[i].index`. Returns a fixed decline message with no citations if nothing relevant is retrieved or the answer fails the groundedness check. |
-| `GET /files/{doc_id}` | The original PDF, session-scoped. Supports range requests. 404s (not 403) on a wrong session, so existence never leaks. |
-| `GET /files/{doc_id}/thumbnail/{page}` | Rendered page image for the hover preview, session-scoped. |
-| `GET /favicons/{domain}` | Cached favicon bytes. Public. |
-| `GET /thumbnails/{key}` | Cached `og:image` for a web citation. Public, opaque key. |
+`POST /query` `{question, mode: "search" | "ask", filters?: {collections, courts,
+year_from, year_to}, matter_id?}` → `{plan, retrieval, citations, answer?, grounded?}`.
+`POST /query/stream` — the same as server-sent events: `plan` → `sources` → `token`… →
+`done` (the final answer) → `verdict` (grounded, or withdrawn). `GET /catalog` — what the
+corpus contains, for the UI's filters. `GET /graph/{doc_id}` — what a document cites and
+what cites it.
 
-Every request carries `X-Session-Id`; it selects the Weaviate tenant. Absent or malformed,
-it falls back to a shared `default` tenant.
+Two workflows run as jobs, because they take long enough to watch. Research: `POST /workflows/research`
+(the same body as a query) returns a job at once; `GET /workflows/{job_id}/events` streams the
+same events a query does, plus `review` after each pass, replayed from the start for a client
+that connects late; `GET /workflows/{job_id}` is the job's status. Case analysis:
+`POST /workflows/case-analysis {matter_id}` reads a matter's documents into a working file
+(below), section by section. `app/workflows/` owns no retrieval or analysis logic: a workflow
+composes the graph, or `app/analysis/`. Rate-limited per client; `PROXY_SECRET` gates
+everything but `/health` when set.
 
-## Retrieval pipeline
+## Case analysis
 
-```
-retrieve --(candidates)--> rerank --(any survive threshold?)--> generate -> verify -> END
-                                  \--(none survive)--> decline -> END
-                                                          ^
-                                          (verify says ungrounded)
-```
+What a matter's documents say, before any law is researched: the parties, the facts each
+document asserts, the events in date order, the Acts and cases the documents cite, where the
+documents contradict each other, and what to look up next — every item pointing at the
+passage it was read from, so a click opens the page with the words highlighted.
 
-1. **retrieve** — Weaviate hybrid search (BM25 + vector) scoped to the tenant, with optional
-   metadata filters pushed into the query. A tenant that has never written anything
-   short-circuits rather than querying a tenant that doesn't exist.
-2. **rerank** — Cohere cross-encoder over 60 candidates, keeping 5 above
-   `RERANK_RELEVANCE_THRESHOLD`. Behind a circuit breaker: if it's unavailable, retrieval
-   order is used instead of failing the query.
-3. **generate** — drafts a cited answer, or routes straight to **decline** if nothing survived.
-4. **verify** — structured-output call checks the draft against the numbered context; an
-   ungrounded answer is replaced by the decline message.
+The order is deliberate. The deterministic steps run first: the **authorities** are found by
+the citation graph's own extractor (plus an Act named without a section, which a letter does
+and a judgment does too often), resolved against the corpus by the same rules the graph uses,
+and each carries how many judgments in the corpus have applied it. The **chronology** is
+parsed from dates as documents write them. Only then do the model steps run — one call per
+document for parties, facts, events and issues (the model gives page numbers; the passage is
+found by word overlap on that page, so anchors are real chunks with real boxes), one call
+across the documents for issues, contradictions and research questions, one for the report.
+A model step that fails is recorded on the analysis in its own words and the rest stands. The
+result is stored on the matter; a research question in it is one click from a research run.
 
-### Small-to-big retrieval
 
-What gets embedded and matched is a small **child** (`CHILD_CHUNK_SIZE_TOKENS`, 200). What
-the model reads is the **parent window** — that child plus `PARENT_WINDOW_RADIUS` neighbours
-either side, denormalised onto the child at ingestion so there's no extra round trip per
-result at query time.
+## Frontend
 
-Retrieval wants small chunks (a 650-token passage embeds to an average of everything in it,
-diluting the one relevant sentence); generation wants large ones (an isolated sentence has
-no referent for "the limit"). This takes both.
+A research desk, not a chat: the query slip at the top of the page with its three modes, the
+answer (or memo) as a cited argument, each `[n]` opening the authority in a bundle beside the page — a bottom sheet on a
+phone, a drawer at laptop width, a column from 1280px. The source is never below the answer.
+An authority the graph added says why it is there; the bundle lists what each authority
+cites and what cites it, each row opening the document. The rail holds the matter in use:
+its documents, their status, and the way to add more; a citation to one of them renders the
+page in the bundle with the passage highlighted (PDF.js, loaded on first use). Filters come
+from `/catalog`. The design world is recorded in `DESIGN.md`; product truth in `PRODUCT.md`.
 
-It also buys the precise highlight. A citation's bbox is the child's box — the lines that
-actually matched — rather than the union of everything in a large chunk. Measured over a
-dense 3-page PDF:
-
-| | chunks | mean bbox | largest |
-|---|---|---|---|
-| 650-token chunks | 9 | 21.8% of page | 29.0% |
-| 200-token children | 36 | **3.4% of page** | 7.7% |
-
-Windows never cross a page (PDFs) or a source document (everything else): a window spanning
-a page break pulls in unrelated text while the bbox still points at one page.
-
-Note that `eval/retrieval_benchmark.py` scores *document-level* recall and shows small-to-big
-slightly behind (93.9% vs 95.9% recall@1) — with 5× more chunks there are 5× more competing
-distractors. That benchmark can't see what this change is for: passage precision, generation
-context, and highlight tightness. The arbiter for those is the faithfulness eval.
-
-### Local models (no provider quota)
-
-Embeddings and reranking both run in-process by default, so neither ingestion nor
-querying depends on a provider quota:
-
-| stage | default (`local`) | alternative (`cohere`) |
-|---|---|---|
-| embeddings | `BAAI/bge-small-en-v1.5` (384-dim) | `embed-v4.0` |
-| reranking | `cross-encoder/ms-marco-MiniLM-L-6-v2` | `rerank-v3.5` |
-
-Measured on CPU: reranking 60 candidates takes **181ms**, embedding 64 passages **178ms**,
-a query embedding **15ms**. Weights are baked into the image, so containers start without a
-download and need no outbound HuggingFace access.
-
-`torch` is pinned to the CPU wheel via `[tool.uv.sources]`. The default wheel drags in
-~3.2GB of CUDA libraries and ~900MB of triton that a CPU container cannot use — it made the
-virtualenv 5.8GB instead of 1.4GB. Note that source overrides only apply to a project's
-*own* dependencies, which is why `torch` is declared directly rather than left transitive.
-
-**Switching `EMBEDDING_PROVIDER` invalidates the index.** Vectors from different models have
-different dimensionality and geometry, so everything must be re-ingested. The embedding
-cache is keyed by model name, so stale vectors are never served across a switch.
-
-Retrieval quality against the same 735-chunk corpus, differing only in embedding model:
-
-| k | Cohere recall@k | local recall@k | Cohere MRR | local MRR |
-|---|---|---|---|---|
-| 1 | **93.9%** | 83.7% | **0.939** | 0.837 |
-| 3 | 95.9% | **98.0%** | **0.949** | 0.905 |
-| 5 | 95.9% | **100.0%** | **0.949** | 0.909 |
-
-Local is worse at putting the right document *first* (-10pp at k=1) but better at getting it
-into the top 5 at all. Since the pipeline retrieves 60 candidates and reranks down to 5,
-top-5 recall is the more decision-relevant number — the cross-encoder re-scores whatever the
-vector stage surfaces. If rank-1 precision matters more for your traffic,
-`bge-base-en-v1.5` (768-dim) is the obvious next step up.
-
-### Multi-stage reranking
-
-```
-hybrid search (60)  →  cross-encoder (→5)  →  [optional] duoT5 pairwise (reorder 5)
-```
-
-Stage 2 scores each passage against the query independently — it can say "both look
-relevant" but never "this one more than that one". Stage 3 (`PAIRWISE_RERANK_ENABLED`) is
-duoT5, trained on exactly that comparison, and catches orderings pointwise scoring can't
-express. A worked case:
-
-| stage | top result |
-|---|---|
-| after cross-encoder | "**international** travel capped at $250" |
-| after duoT5 pairwise | "maximum nightly rate for **domestic** travel is $150" |
-
-**Off by default, because it's quadratic.** Every ordered pair costs a forward pass: k=5 is
-20 comparisons, k=10 is 90, k=20 is 380. Measured at k=5 on CPU it adds **~2.0s per query**,
-roughly doubling end-to-end latency. It runs strictly *after* the cross-encoder has cut 60
-down to a few — never over a candidate pool — and a failure degrades to stage-2 order rather
-than failing the query.
-
-Note that monoT5's role (pointwise neural relevance) is already filled by the MiniLM
-cross-encoder, which does the same job faster and smaller. Enabling stage 3 downloads the
-duoT5 weights (~900MB); they aren't baked into the image since the stage is off by default.
-
-### Metadata filtering
-
-`POST /query` takes an optional `filters` object — `source_types`, `sources`, `doc_ids`,
-`page_from`/`page_to`, ANDed. They become Weaviate `Filter` objects pushed into the hybrid
-query, so filtering happens **before** ranking. Post-filtering a fixed candidate pool is the
-tempting shortcut and it silently destroys recall: ask for 60 and filter after, and a narrow
-filter can leave three.
-
-Filters only ever narrow. Tenancy, not filters, is what bounds visibility.
-
-### Hybrid fusion: measured, not assumed
-
-`HYBRID_FUSION` selects how BM25 and vector rankings combine — `relative`
-(relativeScoreFusion, Weaviate's default) or `ranked` (reciprocal rank fusion).
-
-`eval/retrieval_benchmark.py` scores retrieval on its own, deterministically, against the
-`source` recorded for each golden question — no LLM judge, so it runs in seconds:
-
-```bash
-uv run python eval/retrieval_benchmark.py --compare --k 1 --tenant <tenant>
-```
-
-On a 142-chunk corpus (the 6 fixtures plus topic-adjacent Wikipedia distractors):
-
-| fusion | recall@1 | MRR@5 | nDCG@5 |
-|---|---|---|---|
-| relativeScoreFusion | **95.9%** | **0.973** | **0.980** |
-| rankedFusion (RRF) | 91.8% | 0.949 | 0.957 |
-
-RRF lost at every cutoff, so the default stays `relative`. The instinct behind RRF — use
-ranks, ignore incomparable score scales — is sound when fusing genuinely independent
-retrievers, but here BM25 is the noisier signal and RRF gives its ranking equal standing
-with the vector ranking's.
-
-Two caveats worth keeping in mind: the gap is ~2 questions out of 49, which is not
-statistically strong, and against the *original* 6-chunk fixture corpus the two strategies
-scored **identically** (every query returned the whole corpus, so recall was 100% by
-construction). That is why the distractors exist — a benchmark that can't fail can't choose.
-
-## Ingestion
-
-```
-upload → validate → malware scan → parse → extract structure → normalize
-       → chunk → attach provenance → embed → index
-```
-
-Accepts `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.tsv`, `.json`, `.html`, `.md`, `.rst`,
-`.txt`, `.log`, plus URLs.
-
-- **Validate** — extension, size, magic bytes, UTF-8 decodability, before any parser runs.
-- **Malware scan** — clamd over TCP, **off by default** (`MALWARE_SCAN_ENABLED`); the
-  service is behind a compose profile because its signature database is slow to load:
-  `docker compose --profile scanning up -d`. When enabled and the scanner is unreachable the
-  upload is **refused**, not waved through.
-- **Normalize** — NFKC folding, invisible characters, NBSP, PDF line-break hyphenation.
-  Conservative by design: it never lowercases or restructures, because chunking and bbox
-  highlighting depend on the text still matching the source.
-- **Chunk** — token-bounded (`tiktoken` `cl100k_base`), never crossing a PDF page boundary,
-  so each chunk maps to one page and one bounding box.
-
-Ingestion is **content-addressed**: the doc id is a hash of the bytes, so re-uploading the
-same file is idempotent — it skips parsing, chunking and embedding entirely rather than
-indexing a second copy. Identical content is never re-embedded.
-
-It's also **asynchronous**. The request returns a job id in ~50ms instead of holding the
-connection open for the whole index (~2s for a small text file, minutes for a large PDF);
-the client polls `/ingest/jobs/{id}`. Concurrency is bounded (`INGEST_CONCURRENCY`, default
-2) because the embedding provider is rate-limited — more parallelism buys 429s and retry
-backoff, not throughput.
-
-Jobs live in the app process: a restart loses in-flight work, and status is only known to
-the instance that accepted it. That's fine for one container, and `JobRegistry` is the seam
-to swap for Redis/Celery when there's more than one.
-
-## Citations
-
-Citations are built entirely from each chunk's own metadata (`build_citations()` in
-`app/retrieval/citations.py`). The LLM sees numbered context and writes `[n]` markers; it
-never supplies the citation metadata. `source_type` (`"pdf" | "web" | "text"`) is set at
-ingestion and immutable thereafter — the frontend uses it to decide whether a citation opens
-the PDF viewer, opens a link, or scrolls to itself.
-
-PDF citations carry `doc_id`/`page`/`bbox`; web citations carry `favicon_url`. Both carry a
-`thumbnail_url` for the hover preview, pre-rendered at ingestion.
+`frontend/app/api/[...path]/route.ts` proxies to `BACKEND_URL`, attaching `PROXY_SECRET`
+server-side, so the browser stays same-origin and the secret never ships.
 
 ## Tracing and quality metrics
 
-Set `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` to enable. Blank keys disable tracing
-entirely — the pipeline is unchanged, it just emits nothing. One trace per `/query`:
-
-```
-rag-query                              root; session_id = tenant
-└── LangGraph
-    ├── retrieve → weaviate-hybrid-search   (retriever) candidate chunks, full text
-    ├── rerank   → cohere-rerank            (retriever) survivors + relevance_score, moved_from
-    ├── generate → ChatAnthropic            (generation) prompt, answer, model, tokens, cost
-    └── verify   → verify-groundedness      (evaluator) groundedness verdict
-```
-
-The LangChain callback handler covers the LLM calls; retrieval and reranking get explicit
-observations via `app/tracing.py` since they aren't LangChain components.
-
-Traces carry the full text of retrieved chunks, so the Langfuse project holds the same
-content as the documents themselves.
-
-Each request also carries scores, which is what makes quality trackable over time:
-`answered`, `grounded`, `failed`, `citation_coverage` (share of answer sentences carrying a
-`[n]` marker) and `invalid_citations` (markers pointing at citations that don't exist).
-Computed in `app/scoring.py` — deterministic, no second LLM call.
+Set `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` to enable; blank keys emit nothing. One trace
+per query: `plan-query` (chain) → one `weaviate-hybrid-search` (retriever) per sub-query,
+with its filters and whether it was relaxed → `rerank-cross-encoder` with each survivor's
+prior position → `generate` (prompt version, tokens, cost) → `verify-groundedness`
+(evaluator, both verdicts). Scores on the root: `answered`, `grounded`, `failed`,
+`citation_coverage`, `invalid_citations`.
 
 ```bash
-uv run python -m app.metrics --follow            # live, one line per query as it lands
-uv run python -m app.metrics --since 7d          # p50/p95 latency, cost, coverage, failures
-uv run python -m app.metrics --since 14d --daily # one row per day, to spot the bad day
-uv run python -m app.metrics --day 2026-09-08    # that day, plus its slowest traces
+uv run python -m app.metrics --since 7d           # p50/p95 latency, cost, coverage, failures
+uv run python -m app.prompt_sync                   # mirror prompts/*.yaml into Langfuse
 ```
 
-`--follow` polls (the Langfuse API is REST — there's no subscription endpoint), so a query
-shows up within one interval, default 3s.
+Prompts live in `backend/prompts/*.yaml`, versioned in git; Langfuse mirrors them so
+generations link to the version that produced them.
 
-Gotcha: the root span must be opened on the thread the graph runs on — OTel context is
-thread-local and the route dispatches via `asyncify`.
+## Evaluation
+
+`backend/eval/` is its own uv project (ragas pins conflict with LangChain 1.x).
+
+- `golden_dataset.jsonl` — 36 questions over the corpus, drafted by `build_golden.py` from
+  reconstructed passages and pruned by hand.
+- `fixtures/corpus_slice.json` — the golden documents plus 80 distractors (3.9 MB), what CI
+  indexes; distractors are what let retrieval fail.
+- `run_eval.py` — the faithfulness gate: ragas faithfulness ≥ 0.8, answer rate ≥ 0.9,
+  citation coverage ≥ 0.8, zero invalid citations, no API errors; reports p50/p95 latency
+  per `/query` and the provider and models that answered, so a number is never read without
+  its setup. The judge is local by default (`--judge-model ollama:qwen3:8b`) or Claude;
+  `--concurrency 1 --timeout 1800 --resume` is the local run, hours long and restartable.
+- `retrieval_benchmark.py` — the tables above, in seconds, no judge; `--set golden |
+  relationships | topics | both | matter`; `--min-recall` and `--min-mrr` make it a gate.
+- `golden_relationships.jsonl` — 10 multi-document questions, generated from the citation
+  graph by `build_relationship_questions.py`.
+- `golden_topics.jsonl` — 8 thematic questions ("how have courts treated …") whose ground
+  truth is every judgment containing the phrases that name the theme, from
+  `build_topic_questions.py`; what the topic tree is for.
+- `golden_topics.jsonl` — 8 thematic questions ("how have courts treated…") whose document
+  sets are defined by phrases every judgment in the set contains, by
+  `build_topic_questions.py`; what the topic tree exists for.
+- `golden_matter.jsonl` + `fixtures/matter/` — 20 questions over one matter's three
+  documents, authored as Markdown and rendered to PDF by `build_matter_fixtures.py`.
+- `authorities_benchmark.py` + `golden_authorities.jsonl` — the case analysis's
+  deterministic step over the same fixtures: every citation found, resolved when the corpus
+  holds it, anchored to a passage.
+
+`.github/workflows/eval.yml` runs on every PR what needs no model: unit tests, the slice,
+the retrieval benchmarks against their floors, the authorities benchmark. The faithfulness
+gate runs locally against Ollama (numbers in `MEASUREMENTS.md`), or on dispatch with Claude.
 
 ## Layout
 
 ```
-prompts/                  Versioned prompts (generation, grounding, decline message)
-frontend/                 Plain HTML/CSS/JS, no build step; served by app.frontend()
-app/
-  config.py               Settings (env-driven)
-  metadata.py             SourceType literal, shared vocabulary
-  prompts.py              Loads prompts/*.yaml into versioned templates
-  dependencies.py         FastAPI deps: settings, vector store, graph, tenant
-  rate_limit.py           slowapi limiter, keyed by session id
-  proxy_auth.py           Refuses requests without the proxy's shared secret (prod only)
-  storage.py              Uploaded PDFs + page thumbnails, scoped by tenant
-  favicons.py             Domain-keyed favicon cache
-  thumbnails.py           og:image extraction + cache
-  tracing.py              Langfuse setup; no-ops without keys
-  metrics.py              Quality metrics CLI over the Langfuse API
-  scoring.py              Citation coverage, computed per answer
-  main.py                 App factory + lifespan
-  api/                    Schemas, one router per resource
-  ingestion/              validation, loaders, pdf, splitting, pipeline
-  retrieval/              state, graph, prompts, grounding, citations, reranker
-  vectorstore/            client, store, embeddings
-eval/                     Offline faithfulness harness, isolated uv project
-.github/workflows/        eval.yml — runs the eval on every PR
-render.yaml               Backend on Render: app (web) + Weaviate (private), both with disks
-wrangler.toml, functions/ Frontend on Cloudflare Pages; the Function proxies API paths
+backend/app/
+  corpus/       documents (reconstruction), courts, chunking, splitting, parenting, ingest CLI
+  vectorstore/  client, schema (explicit collections), search (hybrid), embeddings
+  graph/        refs (extraction), resolve, edges, store (Weaviate + in-memory), build CLI
+  tree/         cluster (GMM by BIC), summarise, store (Summary collection), build CLI
+  matters/      models, store (disk), pdf (blocks → page + box), loaders, chunking,
+                ingest (the job), enrich (profile), delete, catalog (for the planner)
+  analysis/     models, chunks, sources (anchors), authorities, resolve, chronology,
+                extract (per document), synthesise (across them, and the report), run
+  retrieval/    catalog, plan (schema), planner (node), filters, retrieve, expand, topics,
+                rerank, review, answer, grounding, citations, run (one query, one trace), graph
+  workflows/    runs (a job with followable events), research, case_analysis
+  api/          schemas, routes/{query,catalog,graph,matters,workflows}, streaming
+  config, main, dependencies, jobs, proxy_auth, rate_limit, caching, resilience, scoring,
+  tracing, metrics, prompts, prompt_sync
+backend/prompts/   planner, generation, review, memo, grounding, profile, extract, analysis,
+                   report, summary, responses
+backend/eval/      the harness above
+frontend/          app/ (layout, page, api proxy), components/, lib/ (types, api, stream, hook)
 ```
-
-## Deploy
-
-Frontend on Cloudflare Pages, backend on Render. Same-origin from the browser's point
-of view: a Pages Function proxies the API paths listed in `frontend/_routes.json` to
-Render and attaches `X-Proxy-Secret`; every other path is a static file. The backend
-refuses anything without the secret (`app/proxy_auth.py`), so its public `onrender.com`
-hostname is not a way around whatever sits in front of the Pages site.
-
-**Render** — Dashboard → New → Blueprint → this repo. `render.yaml` provisions `rag-app`
-(2GB; it idles at ~925MB with both models loaded) and `rag-weaviate` (512MB) with
-persistent disks, generates `PROXY_SECRET`, and prompts for `ANTHROPIC_API_KEY` and the
-Langfuse keys. Copy the generated `PROXY_SECRET` and the app's URL for the next step.
-
-**Cloudflare Pages** — Workers & Pages → Create → Pages → connect the repo. No build
-command; output directory `frontend`. Set two variables on the project: `BACKEND_URL`
-(the Render URL) and `PROXY_SECRET` (encrypted). Locally, `wrangler pages dev` reads the
-same two from a `.dev.vars` file (gitignored).
-
-**Access control** — the app has no login; tenancy is a client-supplied header. Put
-Cloudflare Access (Zero Trust → Applications, free for up to 50 users) in front of the
-Pages hostname before sharing the URL. Without it, anyone who finds the site can upload
-files and run queries on your Anthropic key. Note that Access gates *who gets in*, not
-who sees which session: two admitted users who exchange session ids see each other's
-documents, exactly as on the LAN.
-
-Verified end to end with `wrangler pages dev` against the gated backend: uploads
-(multipart, streamed), PDF.js range requests (206 through the proxy), thumbnails,
-queries and deletes.
-
-## Faithfulness evaluation
-
-`eval/` is a self-contained offline harness in its own `uv` project. It ingests a fixture
-corpus, runs 49 hand-verified golden questions against the live `/query` API, and scores
-answers with ragas's Faithfulness metric.
-
-```bash
-cd eval && uv sync
-uv run python run_eval.py --anthropic-api-key "$ANTHROPIC_API_KEY"
-```
-
-It gates on four thresholds, and the build fails if any of them slips:
-
-| Check | Default | Flag |
-|---|---|---|
-| mean faithfulness | `0.8` | `--faithfulness-threshold` |
-| answer rate | `0.9` | `--min-answer-rate` |
-| citation coverage | `0.8` | `--min-citation-coverage` |
-| invalid citations | `0` | `--max-invalid-citations` |
-
-Answer rate is there so the pipeline can't game faithfulness by declining everything.
-Coverage is computed with the same `app/scoring.py` the app scores live with, rather than a
-copy, so the gate and the dashboard can't drift apart. See `eval/README.md`.
-
-`main` is protected: the eval must pass before a pull request can merge, so work happens on
-a branch.
-
-## Prompt management
-
-Prompts live in `prompts/*.yaml` and are versioned in git — that's the source of truth.
-Langfuse mirrors them:
-
-```bash
-uv run python -m app.prompt_sync --dry-run
-uv run python -m app.prompt_sync        # after merging a prompt change
-```
-
-The direction matters. Authoring prompts in the Langfuse UI would let a prompt change alter
-production behaviour with no pull request and no eval — the exact path the gate above
-exists to close. Keeping them in the repo makes a prompt change a code change.
-
-What Langfuse adds is the version history, the Playground, and the link from each
-generation back to the prompt version that produced it, so latency, cost and scores can be
-grouped by prompt version when something regresses.
-
-## Notes
-
-- `WEAVIATE_HOST` is `localhost` for host-side runs; docker-compose overrides it to
-  `weaviate` for the container, so both work unmodified.
-- Uploaded PDFs live in the `pdf_uploads` volume at `/app/data/uploads`. Enabling
-  multi-tenancy on an existing collection requires recreating it — drop `Chunk` once.
-- Session ids fall back to `crypto.getRandomValues()` when `crypto.randomUUID()` is absent
-  (it needs a secure context, which `http://<lan-ip>` isn't).
-- `frontend/recoleta/Recoleta-RegularDEMO.otf` is a demo weight — check Latinotype's license
-  before shipping.
 
 ## Tests
 
 ```bash
-pytest
+cd backend && uv run ruff check app tests eval && uv run pytest
+cd frontend && npx tsc --noEmit && npm run lint && npm run build
 ```

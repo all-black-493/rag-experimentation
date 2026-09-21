@@ -1,16 +1,26 @@
-name: Faithfulness eval
+name: Eval
 
+# Every PR runs what needs no model: the unit tests, the corpus slice, the
+# retrieval and authorities benchmarks with their floors. The faithfulness
+# gate needs a judge and 36 answers, which is either a paid model or hours of
+# a local one, so it runs by hand: locally against Ollama (see MEASUREMENTS.md)
+# or here on dispatch with an Anthropic key that has credits.
 on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      faithfulness:
+        description: "Run the faithfulness gate on Claude (needs ANTHROPIC_API_KEY with credits)"
+        type: boolean
+        default: true
 
 jobs:
   eval:
     runs-on: ubuntu-latest
-    # 49 questions, each a full RAG turn plus a ragas judge call, against
-    # rate-limited providers. 30 minutes wasn't enough.
     timeout-minutes: 60
+    env:
+      FAITHFULNESS: ${{ github.event_name == 'workflow_dispatch' && inputs.faithfulness }}
     steps:
       - uses: actions/checkout@v4
 
@@ -19,19 +29,24 @@ jobs:
 
       - name: Write app env file
         run: |
-          cat > .env <<EOF
-          # Embeddings and reranking run locally; this is only needed if a run
-          # sets EMBEDDING_PROVIDER/RERANKER_PROVIDER back to cohere.
+          cat > backend/.env <<EOF
           COHERE_API_KEY=${{ secrets.COHERE_API_KEY }}
           ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
           EOF
 
+      - name: Unit tests
+        working-directory: backend
+        run: uv sync --frozen && uv run ruff check app tests eval && uv run pytest -q
+
       - name: Start app stack
-        run: docker compose up -d --build
+        # Only the API and Weaviate: no Ollama here, and Claude only on dispatch.
+        env:
+          LLM_PROVIDER: ${{ env.FAITHFULNESS == 'true' && 'anthropic' || 'ollama' }}
+        run: docker compose up -d --build app
 
       - name: Wait for API health
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             if curl -sf http://localhost:8010/health; then exit 0; fi
             sleep 2
           done
@@ -39,17 +54,47 @@ jobs:
           docker compose logs
           exit 1
 
+      - name: Ingest the corpus slice
+        # The golden documents plus distractors, in the corpus's own format.
+        # The catalog and the citation graph are loaded at startup, so the app
+        # restarts afterwards to see what was just indexed.
+        run: |
+          docker compose cp backend/eval/fixtures/corpus_slice.json app:/tmp/corpus_slice.json
+          docker compose exec -T app python -m app.corpus.ingest /tmp/corpus_slice.json
+          docker compose exec -T app python -m app.graph.build
+          docker compose restart app
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8010/health; then break; fi
+            sleep 2
+          done
+          curl -sf http://localhost:8010/catalog
+
       - name: Install eval dependencies
-        working-directory: eval
+        working-directory: backend/eval
         run: uv sync
 
-      - name: Run faithfulness evaluation
-        working-directory: eval
+      - name: Retrieval benchmark
+        # Floors just under the measured numbers (MEASUREMENTS.md), with room
+        # for the planner's rewrites when a model is on.
+        working-directory: backend/eval
+        run: |
+          uv run python retrieval_benchmark.py --label ci --min-recall 0.97 --min-mrr 0.95
+          uv run python retrieval_benchmark.py --label ci --set matter --min-recall 0.95 --min-mrr 0.90
+
+      - name: Authorities benchmark
+        working-directory: backend/eval
+        run: uv run python authorities_benchmark.py
+
+      - name: Faithfulness gate
+        if: env.FAITHFULNESS == 'true'
+        working-directory: backend/eval
         # Unbuffered: stdout is a pipe here, so without this the progress lines
         # sit in the buffer and are lost entirely if the job is cancelled.
         env:
           PYTHONUNBUFFERED: "1"
-        run: uv run python run_eval.py --anthropic-api-key "${{ secrets.ANTHROPIC_API_KEY }}"
+        run: >-
+          uv run python run_eval.py --judge-model claude-sonnet-5
+          --anthropic-api-key "${{ secrets.ANTHROPIC_API_KEY }}"
 
       - name: Dump app logs
         # Not failure() alone: a timeout cancels the job, which would skip this
@@ -58,11 +103,11 @@ jobs:
         run: docker compose logs --no-color --tail 200 app
 
       - name: Upload eval report
-        if: always()
+        if: env.FAITHFULNESS == 'true' && always()
         uses: actions/upload-artifact@v4
         with:
           name: eval-report
-          path: eval/report.json
+          path: backend/eval/report.json
 
       - name: Tear down stack
         if: always()

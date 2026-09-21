@@ -1,3 +1,0 @@
-version: 1
-decline_message: >
-  I don't have enough information in the indexed documents to answer this question.
