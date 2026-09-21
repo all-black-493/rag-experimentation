@@ -482,3 +482,44 @@ The faithfulness gate itself is a manual run: `run_eval.py --concurrency 1 --tim
 Claude judge when a key has credits. Its last measured numbers remain the Anthropic ones
 above (faithfulness 0.924, coverage 0.74 before prompt v5); the local numbers are not yet
 taken.
+
+## 2026-09-21 · One ask through the UI on `qwen3:8b`, and what the gate costs here
+
+Everything is on `main` (PR #17). The first local gate attempts died with the machine:
+three reboots in a day (11:09, 11:22, 12:57), each with `systemd-journald: Under memory
+pressure, flushing caches` in the last minute of the previous boot — 15.6 GB of RAM, 2 GB
+of swap, a 7.6 GB Ollama runner (5.2 GB weights + 2.3 GB of f16 KV cache at 16k), VS Code
+and 20 containers from other projects. The other containers are gone; the Ollama service
+now runs with `OLLAMA_KV_CACHE_TYPE=q8_0` (KV 2304 → 1152 MiB at 16k), `OLLAMA_NUM_PARALLEL=1`,
+and an 8 GB `mem_limit`, so a spike kills the runner (one failed call, retried by
+`--resume`) instead of the desktop. Resident after the change: 5.7–5.8 GB.
+
+**One uncached ask, end to end through the frontend** (legislation-02, no matter selected,
+both sources ticked; 20:31:02 → 20:46:01 UTC, **15.0 min**):
+
+| stage | wall | tokens |
+|---|---|---|
+| plan (`qwen3:8b`) | 1 m 53 s | 552 prompt → 100 out; routed to legislation only |
+| retrieve + rerank | ~4 s | five passages, all from the Guidelines |
+| generate | 7 m 07 s | 2,412 prompt at 6.0 tok/s → 55 out at 2.2 tok/s |
+| verify | 5 m 49 s | 2,276 prompt → 95 out; **grounded** |
+
+The answer: *"…an insurance intermediary must transmit a received claim notification to
+the insurer not later than two (2) working days [2]. This is provided in section 10(2) of
+the Guidelines."* Ground truth: "immediately … and in any case not later than two (2)
+working days". Right on the timeframe and the section; "immediately" dropped; one of two
+sentences carries a marker (coverage 0.5 on this answer — the prompt-v5 rule that every
+sentence cites is not yet holding on Qwen). The highlighted child of [2] is s.11 (the
+insurer's duty); the intermediary rule, s.10(2), sits in the same parent window just above
+it, which is what the generator read. Two UI observations for the iteration: five
+authorities with the identical title and no section shown, and a highlight that marks the
+retrieved child rather than the sentence the claim rests on.
+
+Noted while running it: the `app` container had been created with `OLLAMA_NUM_CTX=8192` from
+a shell variable (Ollama logged `n_ctx_slot = 8192`); recreated with the 16k default before
+the gate. Prompt processing runs at 6–7 tok/s, so the 2.4k-token ask prompt alone is 6 min.
+
+**The gate's real cost here:** an ask is ~15 min and a ragas faithfulness judgment on
+`qwen3:8b` is two calls of 6 and 34 min (observed on the one question that got that far),
+so ~1 h a question — **~36–40 h for the 36**. It runs detached via `backend/eval/gate.sh`,
+each result kept in `report.partial.jsonl`; started 23:47 EAT.

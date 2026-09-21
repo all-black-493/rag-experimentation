@@ -78,6 +78,17 @@ services:
     image: ollama/ollama
     ports:
       - "11435:11434"
+    environment:
+      # One request at a time, and an 8-bit KV cache: at 16k context that is
+      # 1.2 GB instead of 2.3. On a 16 GB machine the difference is whether
+      # the desktop survives a long call.
+      OLLAMA_NUM_PARALLEL: 1
+      OLLAMA_FLASH_ATTENTION: 1
+      OLLAMA_KV_CACHE_TYPE: q8_0
+      OLLAMA_KEEP_ALIVE: 30m
+    # qwen3:8b is ~7 GB resident. The cap keeps a spike inside this container
+    # (the runner dies and the call fails) rather than freezing the host.
+    mem_limit: ${OLLAMA_MEM_LIMIT:-8g}
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
