@@ -1,9 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { IBM_Plex_Mono, IBM_Plex_Sans, IBM_Plex_Serif } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Serif, Inter } from "next/font/google";
 import "./globals.css";
 
-const plexSans = IBM_Plex_Sans({
-  variable: "--font-plex-sans",
+const inter = Inter({
+  variable: "--font-ui-sans",
   subsets: ["latin"],
   weight: ["400", "500", "600"],
 });
@@ -28,11 +28,11 @@ top of a working page; the answer is a skeleton argument whose numbered
 authorities open in a bundle beside it. It refuses the bubble transcript
 with a composer pinned to the bottom, and the enterprise results page of
 blue links.
-OWN-WORLD: Warm paper and near-black ink, one oxblood red for what is
-active or actionable, an amber highlighter for the matched passage. IBM
-Plex in three cuts: Serif reads the law, Sans operates the tool, Mono
-carries citations and dates. Hairline rules, no cards, no shadows except
-the bundle lifting off the page.
+OWN-WORLD: A dark room and one sheet of light. Everything operated is
+greyscale; the only colour is the amber highlighter across a matched
+passage and the single control that acts. Inter operates the tool, a
+serif reads the law, mono carries citations and dates. Hairline rules,
+no cards, no shadows except the bundle lifting off the page.
 STORY: A practitioner asks, sees what was consulted, reads a cited
 answer, and verifies each authority without leaving the page - then
 follows it to kenyalaw.org if it matters.
@@ -54,7 +54,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#f6f2ea",
+  themeColor: "#0b0b0c",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
@@ -64,7 +64,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${plexSans.variable} ${plexSerif.variable} ${plexMono.variable} h-full`}
+      className={`${inter.variable} ${plexSerif.variable} ${plexMono.variable} h-full`}
     >
       <body className="min-h-full">
         {/* React strips JSX comments, so the direction contract is emitted as a

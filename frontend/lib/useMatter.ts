@@ -1,11 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createMatter, deleteDocument, fetchMatter, listMatters, uploadDocument } from "./api";
+import {
+  createMatter,
+  deleteDocument,
+  fetchMatter,
+  followMatter,
+  listMatters,
+  uploadDocument,
+} from "./api";
 import type { Matter } from "./types";
 
 const STORAGE_KEY = "wakili.matter";
-const POLL_MS = 1500;
 
 function remembered(): string | null {
   try {
@@ -26,8 +32,9 @@ function remember(id: string | null) {
 
 /**
  * The matters this browser can see and the one in use. While a document of the
- * current matter is still being indexed, the matter is re-read until it isn't,
- * so the rail shows the status change without a refresh.
+ * current matter is still being indexed, the server streams the matter as its
+ * state moves, so the rail shows the status change without a refresh and
+ * without asking.
  */
 export function useMatter() {
   const [matters, setMatters] = useState<Matter[]>([]);
@@ -56,10 +63,21 @@ export function useMatter() {
 
   useEffect(() => {
     if (!currentId || !pending) return;
-    const timer = window.setInterval(() => {
-      fetchMatter(currentId).then(replace).catch(() => undefined);
-    }, POLL_MS);
-    return () => window.clearInterval(timer);
+    const controller = new AbortController();
+    (async () => {
+      try {
+        for await (const matter of followMatter(currentId, controller.signal)) {
+          replace(matter);
+        }
+      } catch {
+        // The stream is how the status arrives, not how it is established:
+        // if it drops, one read still leaves the rail correct.
+        if (!controller.signal.aborted) {
+          fetchMatter(currentId).then(replace).catch(() => undefined);
+        }
+      }
+    })();
+    return () => controller.abort();
   }, [currentId, pending, replace]);
 
   const select = useCallback((id: string | null) => {

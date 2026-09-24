@@ -99,7 +99,6 @@ export function FilterRail({ catalog, value, onChange, matter = null }: Props) {
               </label>
             ))}
           </div>
-          <p className="mt-2 text-xs text-ink-3">None ticked means every court.</p>
         </fieldset>
       )}
 

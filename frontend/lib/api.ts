@@ -4,18 +4,33 @@ import type {
   Catalog,
   GraphNeighbourhood,
   Matter,
+  MatterEvent,
   QueryRequest,
   StreamEvent,
   WorkflowAccepted,
 } from "./types";
 
+/**
+ * What went wrong, in words a reader can act on.
+ *
+ * A 4xx is the reader's to fix and the server says why - the file is too
+ * large, the matter is gone - so that sentence is passed through. A 5xx is
+ * ours, and a status code tells the reader nothing they can do anything
+ * about, so it never reaches the page.
+ */
 async function failure(response: Response): Promise<Error> {
-  try {
-    const body = await response.json();
-    return new Error(body.detail ?? `Request failed (${response.status})`);
-  } catch {
-    return new Error(`Request failed (${response.status})`);
+  if (response.status === 429) {
+    return new Error("Too many requests just now. Wait a moment and try again.");
   }
+  if (response.status < 500) {
+    try {
+      const body = await response.json();
+      if (typeof body.detail === "string" && body.detail) return new Error(body.detail);
+    } catch {
+      // No JSON body: fall through to the general sentence.
+    }
+  }
+  return new Error("Something went wrong at our end. Try again in a moment.");
 }
 
 export async function fetchCatalog(): Promise<Catalog> {
@@ -91,6 +106,26 @@ export async function* followRun(jobId: string, signal: AbortSignal): AsyncGener
   });
   if (!response.ok) throw await failure(response);
   yield* readEvents(response, signal);
+}
+
+/**
+ * A matter's state now, then again on every change, until nothing is indexing.
+ *
+ * The server closes the stream when the last document is in, which is the
+ * signal to stop watching - there is nothing further to hear.
+ */
+export async function* followMatter(
+  matterId: string,
+  signal: AbortSignal,
+): AsyncGenerator<Matter> {
+  const response = await fetch(`/api/matters/${matterId}/events`, {
+    headers: { accept: "text/event-stream" },
+    signal,
+  });
+  if (!response.ok) throw await failure(response);
+  for await (const event of readEvents<MatterEvent>(response, signal)) {
+    yield event.data;
+  }
 }
 
 /** Read a matter's documents into a working file; followed like any run. */

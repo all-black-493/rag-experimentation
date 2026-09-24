@@ -1,5 +1,6 @@
 """The /matters routes, over a real store on disk and fakes for Weaviate and the job."""
 
+import json
 from pathlib import Path
 
 import pymupdf
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import matters
 from app.caching import TTLCache
+from app.matters.events import MatterEvents
 from app.matters.store import MatterStore
 
 
@@ -80,7 +82,9 @@ def make_pdf(path: Path) -> bytes:
 def make_app(tmp_path: Path):
     app = FastAPI()
     app.include_router(matters.router)
-    app.state.matters = MatterStore(tmp_path / "matters")
+    events = MatterEvents()
+    app.state.matter_events = events
+    app.state.matters = MatterStore(tmp_path / "matters", on_change=events.publish)
     app.state.jobs = InlineJobs()
     app.state.client = FakeClient()
     app.state.retrieval_cache = TTLCache(60)
@@ -151,3 +155,27 @@ def test_bad_uploads_are_refused_on_the_request(tmp_path):
     missing = client.post("/matters/000000000000/documents", files={"file": ("a.txt", b"x")})
     assert missing.status_code == 404
     assert client.get("/matters/not-an-id").status_code == 404
+
+
+def test_the_event_stream_reports_a_document_until_it_is_indexed(tmp_path):
+    """A client that opens the stream is told the matter's state at once, then
+    each change, and the stream ends when nothing is indexing - which is the
+    whole of what the client used to poll for."""
+    app = make_app(tmp_path)
+    client = TestClient(app)
+    matter_id = client.post("/matters", json={"name": "Wanjiru v Otieno"}).json()["id"]
+    client.post(
+        f"/matters/{matter_id}/documents",
+        files={"file": ("lease.pdf", make_pdf(tmp_path / "lease.pdf"), "application/pdf")},
+    )
+
+    with client.stream("GET", f"/matters/{matter_id}/events") as response:
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        states = [json.loads(line.removeprefix("data:")) for line in response.iter_lines()
+                  if line.startswith("data:")]
+
+    # The fake job indexes on submit, so by the time the stream opens the work
+    # is done: one state, complete, and then the server closes.
+    assert [d["status"] for d in states[-1]["documents"]] == ["indexed"]
+    assert states[-1]["name"] == "Wanjiru v Otieno"

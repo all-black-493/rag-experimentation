@@ -12,6 +12,7 @@ against its pattern before it is used to build a path.
 import re
 import secrets
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -30,9 +31,12 @@ def new_matter_id() -> str:
 
 
 class MatterStore:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, on_change: Callable[[Matter], None] | None = None):
         self._root = root
         self._lock = threading.Lock()
+        # Every state change goes through `_write`, so that is where anyone
+        # watching a matter hears about it.
+        self._on_change = on_change
 
     def _dir(self, matter_id: str) -> Path:
         if not MATTER_ID.match(matter_id):
@@ -139,3 +143,5 @@ class MatterStore:
         temporary = directory / f"{_RECORD}.tmp"
         temporary.write_text(matter.model_dump_json(indent=2))
         temporary.replace(directory / _RECORD)
+        if self._on_change is not None:
+            self._on_change(matter)
