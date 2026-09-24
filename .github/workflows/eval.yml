@@ -1,26 +1,38 @@
 name: Eval
 
-# Every PR runs what needs no model: the unit tests, the corpus slice, the
-# retrieval and authorities benchmarks with their floors. The faithfulness
-# gate needs a judge and 36 answers, which is either a paid model or hours of
-# a local one, so it runs by hand: locally against Ollama (see MEASUREMENTS.md)
-# or here on dispatch with an Anthropic key that has credits.
+# Two jobs, split by what they need.
+#
+# `eval` is the gate: unit tests and the benchmarks that need no model, on
+# every PR, in about fifteen minutes.
+#
+# `faithfulness` answers real questions and judges the answers, so it needs a
+# model. There is no API budget for a hosted one, so CI runs Ollama beside the
+# app on a small model - which measures the harness, the citation contract and
+# the absence of errors, not the quality of the model that ships. A question
+# costs minutes on a four-core runner, so a PR scores a slice of the set and
+# the nightly run scores a bigger one; the whole set on the shipping model is
+# a local run (backend/eval/gate.sh, ~7 h), recorded in MEASUREMENTS.md.
 on:
   pull_request:
     branches: [main]
+  schedule:
+    # 02:00 UTC; nothing else is competing for runners.
+    - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
-      faithfulness:
-        description: "Run the faithfulness gate on Claude (needs ANTHROPIC_API_KEY with credits)"
-        type: boolean
-        default: true
+      questions:
+        description: "Questions for the faithfulness job"
+        type: string
+        default: "6"
+
+env:
+  # Small enough to answer and judge inside a CI job on four cores.
+  CI_MODEL: qwen3:1.7b
 
 jobs:
   eval:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      FAITHFULNESS: ${{ github.event_name == 'workflow_dispatch' && inputs.faithfulness }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -39,35 +51,13 @@ jobs:
         run: uv sync --frozen && uv run ruff check app tests eval && uv run pytest -q
 
       - name: Start app stack
-        # Only the API and Weaviate: no Ollama here, and Claude only on dispatch.
-        env:
-          LLM_PROVIDER: ${{ env.FAITHFULNESS == 'true' && 'anthropic' || 'ollama' }}
         run: docker compose up -d --build app
 
       - name: Wait for API health
-        run: |
-          for i in $(seq 1 90); do
-            if curl -sf http://localhost:8010/health; then exit 0; fi
-            sleep 2
-          done
-          echo "API did not become healthy in time" >&2
-          docker compose logs
-          exit 1
+        run: .github/scripts/wait-for-api.sh
 
       - name: Ingest the corpus slice
-        # The golden documents plus distractors, in the corpus's own format.
-        # The catalog and the citation graph are loaded at startup, so the app
-        # restarts afterwards to see what was just indexed.
-        run: |
-          docker compose cp backend/eval/fixtures/corpus_slice.json app:/tmp/corpus_slice.json
-          docker compose exec -T app python -m app.corpus.ingest /tmp/corpus_slice.json
-          docker compose exec -T app python -m app.graph.build
-          docker compose restart app
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:8010/health; then break; fi
-            sleep 2
-          done
-          curl -sf http://localhost:8010/catalog
+        run: .github/scripts/ingest-slice.sh
 
       - name: Install eval dependencies
         working-directory: backend/eval
@@ -85,29 +75,100 @@ jobs:
         working-directory: backend/eval
         run: uv run python authorities_benchmark.py
 
+      - name: App logs
+        if: always()
+        run: docker compose logs --no-color app > app.log || true
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-logs
+          path: app.log
+          if-no-files-found: warn
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v
+
+  faithfulness:
+    runs-on: ubuntu-latest
+    # A question is a plan, an answer, a verification and two judge calls, all
+    # on CPU. Six of them plus the setup fit inside this; the nightly twelve
+    # take about twice as long.
+    timeout-minutes: 330
+    env:
+      LLM_PROVIDER: ollama
+      OLLAMA_MODEL: ${{ env.CI_MODEL }}
+      OLLAMA_FAST_MODEL: ${{ env.CI_MODEL }}
+      QUESTIONS: ${{ inputs.questions || (github.event_name == 'schedule' && '12') || '6' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Write app env file
+        run: |
+          cat > backend/.env <<EOF
+          COHERE_API_KEY=${{ secrets.COHERE_API_KEY }}
+          EOF
+
+      - name: Start the stack with a local model
+        run: docker compose up -d --build
+
+      - name: Pull the model
+        run: |
+          docker compose exec -T ollama ollama pull "$CI_MODEL"
+          docker compose exec -T ollama ollama list
+
+      - name: Wait for API health
+        run: .github/scripts/wait-for-api.sh
+
+      - name: Ingest the corpus slice
+        run: .github/scripts/ingest-slice.sh
+
+      - name: Install eval dependencies
+        working-directory: backend/eval
+        run: uv sync
+
       - name: Faithfulness gate
-        if: env.FAITHFULNESS == 'true'
         working-directory: backend/eval
         # Unbuffered: stdout is a pipe here, so without this the progress lines
         # sit in the buffer and are lost entirely if the job is cancelled.
+        #
+        # What is gated is the contract, not the prose: every answer cites
+        # passages that exist, the API never errors, and the judge can read
+        # what came back. Faithfulness and coverage are recorded rather than
+        # gated, because on this model they measure this model - the numbers
+        # that stand for the product come from the local run on qwen3:8b.
         env:
           PYTHONUNBUFFERED: "1"
         run: >-
-          uv run python run_eval.py --judge-model claude-sonnet-5
-          --anthropic-api-key "${{ secrets.ANTHROPIC_API_KEY }}"
+          uv run python run_eval.py
+          --judge-model "ollama:$CI_MODEL"
+          --limit "$QUESTIONS"
+          --concurrency 1
+          --timeout 1800
+          --min-answer-rate 0.9
+          --max-invalid-citations 0
+          --faithfulness-threshold 0
+          --min-citation-coverage 0
 
-      - name: Dump app logs
-        # Not failure() alone: a timeout cancels the job, which would skip this
-        # step exactly when the logs are most needed.
-        if: '!success()'
-        run: docker compose logs --no-color --tail 200 app
+      - name: App logs
+        if: always()
+        run: docker compose logs --no-color app > app.log && docker compose logs --no-color ollama > ollama.log || true
 
-      - name: Upload eval report
-        if: env.FAITHFULNESS == 'true' && always()
+      - name: Keep the report and the logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: eval-report
-          path: backend/eval/report.json
+          name: faithfulness-report
+          path: |
+            backend/eval/report.json
+            app.log
+            ollama.log
+          if-no-files-found: warn
 
       - name: Tear down stack
         if: always()

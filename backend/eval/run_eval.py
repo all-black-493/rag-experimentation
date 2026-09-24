@@ -123,10 +123,15 @@ class Report:
         return sum(r.invalid_citations for r in self.answered)
 
 
-def load_dataset(path: Path) -> list[dict]:
+def load_dataset(path: Path, limit: int | None = None) -> list[dict]:
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     if not rows:
         raise ValueError(f"No QA pairs found in {path}")
+    # Taken evenly rather than from the front, so a short run still spans
+    # legislation and case law instead of stopping inside the first collection.
+    if limit is not None and limit < len(rows):
+        step = len(rows) / limit
+        rows = [rows[int(i * step)] for i in range(limit)]
     return rows
 
 
@@ -240,7 +245,7 @@ def load_partial(path: Path) -> dict[str, SampleResult]:
 
 
 async def run(args: argparse.Namespace) -> Report:
-    dataset = load_dataset(args.dataset)
+    dataset = load_dataset(args.dataset, args.limit)
 
     judge = LangchainLLMWrapper(build_judge(args), bypass_temperature=True)
     faithfulness = Faithfulness(llm=judge)
@@ -374,6 +379,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--anthropic-api-key", default="")
     parser.add_argument("--ollama-base-url", default="http://localhost:11435")
     parser.add_argument("--concurrency", type=int, default=5, help="1 for a local model")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="score only this many questions, spread across the set; what CI can afford",
+    )
     parser.add_argument("--timeout", type=float, default=180.0, help="seconds per /query")
     parser.add_argument(
         "--resume",
