@@ -523,3 +523,45 @@ the gate. Prompt processing runs at 6–7 tok/s, so the 2.4k-token ask prompt al
 `qwen3:8b` is two calls of 6 and 34 min (observed on the one question that got that far),
 so ~1 h a question — **~36–40 h for the 36**. It runs detached via `backend/eval/gate.sh`,
 each result kept in `report.partial.jsonl`; started 23:47 EAT.
+
+## 2026-09-22 · The faithfulness gate on `qwen3:8b`, end to end
+
+First full local run of the 36-question gate with Qwen answering *and* judging
+(`gate.sh`, concurrency 1, resumable). 7.5 h of wall clock, no cost.
+
+| what | Claude (2026-09-19) | qwen3:8b | gate |
+|---|---|---|---|
+| mean faithfulness | 0.924 | **0.960** | ≥ 0.8 ✅ |
+| answer rate | 100% | 97.1% | ≥ 0.9 ✅ |
+| invalid citations | 0 | **0** | 0 ✅ |
+| citation coverage | 0.806 | **0.607** | ≥ 0.8 ❌ |
+| API errors | 0 | 1 | 0 ❌ |
+| p50 / p95 per ask | 20.8 s / — | 855 s / 941 s | — |
+
+**GATE: FAIL (citation coverage, no api errors).**
+
+**What made the coverage number.** Not hallucination — the opposite. Qwen states the law
+correctly and then cites it *like a lawyer* instead of like this system: 7 of 34 answers
+scored 0.0 because every marker was a legal citation rather than the passage index the
+contract requires.
+
+> "…initiate project activities identified from such planning in the area through the
+> Government generally **[Act No. 16 of 1990, s. 8(a)]**"
+> "…as stated in ***Republic v Danson Mgunya & another* [2010] eKLR**"
+
+Both are correct law and both are unusable as provenance: `[n]` is what maps a sentence
+back to the passage the model actually read, and `citation_coverage` counts only that.
+Fifteen of 34 answers scored 1.0, so the instruction lands about half the time — a smaller
+model substitutes a domain-plausible format for the specified one, where Sonnet did not.
+Faithfulness *rose* (0.924 → 0.960) because the judge scores claims against the retrieved
+passages, and Qwen quotes them more literally. The fix is prompt-side and must not be
+scorer-side: widening the scorer to accept `[Act No. 16 of 1990, s. 8(a)]` would make the
+number go up while the provenance contract — click a marker, see the passage — breaks.
+
+The one API error (`legislation-11`) was the Ollama runner dying mid-generation under the
+8 GB cap; `--resume` re-queued it and the retry hit the same wall. Two failures out of 37
+attempts over 7.5 h.
+
+**Cost of the run:** 36 asks at 855 s p50, each followed by a ragas judgment on the same
+8 GB model. Prompt processing at 6–7 tok/s dominates: an ask's 2.4k-token prompt is ~6 min
+before the first token.
