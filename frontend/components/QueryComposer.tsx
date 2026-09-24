@@ -50,7 +50,7 @@ export function QueryComposer({ value, onChange, mode, onModeChange, busy, onSub
         event.preventDefault();
         submit();
       }}
-      className="rounded-panel border border-rule-2 bg-sheet"
+      className="rounded-[14px] border border-rule-2 bg-sheet transition-colors duration-150 focus-within:border-ink-3"
     >
       <label htmlFor="question" className="sr-only">
         Your question
@@ -69,7 +69,7 @@ export function QueryComposer({ value, onChange, mode, onModeChange, busy, onSub
           }
         }}
         placeholder={PLACEHOLDER[mode]}
-        className="block w-full resize-none bg-transparent px-4 pt-4 pb-2 font-serif text-read leading-relaxed placeholder:text-ink-3 focus:outline-none"
+        className="block w-full resize-none bg-transparent px-4 pt-4 pb-2 font-serif text-read leading-relaxed text-ink placeholder:text-ink-3 focus:outline-none"
       />
       <div className="flex items-center justify-between gap-3 px-3 pb-3">
         <ModeToggle value={mode} onChange={onModeChange} />
@@ -86,7 +86,7 @@ export function QueryComposer({ value, onChange, mode, onModeChange, busy, onSub
           <button
             type="submit"
             disabled={!question.trim()}
-            className="inline-flex min-h-9 items-center gap-2 rounded-control bg-red px-3.5 text-sm font-medium text-sheet transition-colors duration-150 hover:bg-red-2 disabled:cursor-not-allowed disabled:bg-rule-2 disabled:text-ink-3"
+            className="inline-flex min-h-9 items-center gap-2 rounded-control bg-ink px-3.5 text-sm font-medium text-paper transition-colors duration-150 hover:bg-white disabled:cursor-not-allowed disabled:bg-rule-2 disabled:text-ink-3"
           >
             {ACTION[mode]}
             <ArrowUp size={15} strokeWidth={2.25} aria-hidden="true" />

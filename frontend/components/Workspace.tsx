@@ -207,7 +207,7 @@ export function Workspace() {
             type="button"
             aria-label="Close filters"
             onClick={() => setRailOpen(false)}
-            className="fixed inset-0 z-30 bg-ink/20 lg:hidden"
+            className="fixed inset-0 z-30 bg-black/60 lg:hidden"
           />
         )}
 

@@ -1,31 +1,33 @@
 @import "tailwindcss";
 
 /*
-  Wakili's visual world: paper, ink, one red.
+  Wakili's visual world: a dark room, one sheet of light, one accent.
 
-  The materials are the practitioner's own - the bound Laws of Kenya, the law
-  report page, the bundle of authorities with its numbered tabs. Light because
-  the use scene is daylight at a desk or a phone in a court corridor. IBM Plex
-  in three cuts does the work one family should: Serif for anything read as
-  law, Sans for anything operated, Mono for identifiers - neutral citations,
-  dates, version stamps - which are data, not prose.
+  Dark because the work is long and the reading is dense, and because the
+  interface should disappear behind the law it is showing. Everything the
+  tool operates is greyscale; the only colour in the room is the amber
+  highlighter drawn across a matched passage and the one control that acts.
+  Inter operates the tool, a serif reads the law, mono carries identifiers -
+  neutral citations, dates, version stamps - which are data, not prose.
 */
 @theme {
-  --color-paper: #f6f2ea;
-  --color-paper-2: #ede7db;
-  --color-sheet: #fdfbf6;
-  --color-ink: #1b1916;
-  --color-ink-2: #4d4740;
-  --color-ink-3: #6c655c;
-  --color-rule: #d8d0c1;
-  --color-rule-2: #c6bcaa;
-  --color-red: #7a1f1f;
-  --color-red-2: #5c1717;
-  --color-red-tint: #f2e3df;
-  --color-marker: #f1e0a5;
-  --color-ok: #2f5d3a;
+  /* The room: near-black page, a lifted surface for anything you act on. */
+  --color-paper: #0b0b0c;
+  --color-paper-2: #141416;
+  --color-sheet: #171719;
+  --color-ink: #ededee;
+  --color-ink-2: #a4a4ac;
+  --color-ink-3: #71717a;
+  --color-rule: #1f1f23;
+  --color-rule-2: #2e2e34;
+  /* What acts, and what has been found. */
+  --color-red: #e8705a;
+  --color-red-2: #f08d79;
+  --color-red-tint: #2a1713;
+  --color-marker: #f2c14e;
+  --color-ok: #6ac48a;
 
-  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-ui-sans), ui-sans-serif, system-ui, sans-serif;
   --font-serif: var(--font-plex-serif), "Iowan Old Style", Georgia, serif;
   --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
 
@@ -40,15 +42,15 @@
   --radius-control: 6px;
   --radius-panel: 10px;
 
-  --shadow-sheet: 0 -8px 28px -14px rgb(27 25 22 / 0.28);
-  --shadow-drawer: -12px 0 32px -18px rgb(27 25 22 / 0.28);
+  --shadow-sheet: 0 -8px 28px -14px rgb(0 0 0 / 0.6);
+  --shadow-drawer: -12px 0 32px -18px rgb(0 0 0 / 0.6);
 
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @layer base {
   html {
-    color-scheme: light;
+    color-scheme: dark;
     background: var(--color-paper);
   }
 
@@ -65,7 +67,7 @@
   /* The parts nobody draws still carry the world. */
   ::selection {
     background: var(--color-marker);
-    color: var(--color-ink);
+    color: #17150f;
   }
   * {
     caret-color: var(--color-red);
@@ -105,6 +107,7 @@
   */
   .marker {
     background-image: linear-gradient(var(--color-marker), var(--color-marker));
+    color: #17150f;
     background-repeat: no-repeat;
     background-size: 100% 100%;
     box-decoration-break: clone;
@@ -154,7 +157,7 @@
     background: linear-gradient(
       90deg,
       var(--color-paper-2) 0%,
-      var(--color-sheet) 50%,
+      var(--color-rule-2) 50%,
       var(--color-paper-2) 100%
     );
     background-size: 200% 100%;
