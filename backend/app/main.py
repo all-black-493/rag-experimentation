@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.graph.store import ensure_citation_collection, load_graph
 from app.jobs import JobRegistry
 from app.llm import build_chat_model
+from app.matters.events import MatterEvents
 from app.matters.ingest import ingest
 from app.matters.store import MatterStore
 from app.proxy_auth import require_proxy_secret
@@ -78,9 +79,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Matters: the store on disk, the job runner, and the one function an
         # upload hands to it.
         retrieval_cache = TTLCache(settings.retrieval_cache_ttl_seconds)
-        matter_store = MatterStore(MATTERS_DIR)
+        # Every write to a matter is announced, so a client watching one is told
+        # a document finished indexing instead of asking every second.
+        matter_events = MatterEvents()
+        matter_store = MatterStore(MATTERS_DIR, on_change=matter_events.publish)
         app.state.client = client
         app.state.matters = matter_store
+        app.state.matter_events = matter_events
         app.state.jobs = JobRegistry(max_concurrency=settings.ingest_concurrency)
         app.state.retrieval_cache = retrieval_cache
         app.state.ingest = partial(ingest, matter_store, client, embeddings, settings, planner)

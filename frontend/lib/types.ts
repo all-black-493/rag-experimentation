@@ -284,3 +284,6 @@ export type StreamEvent =
   | { event: "done"; data: QueryResponse }
   | { event: "verdict"; data: Verdict }
   | { event: "error"; data: { detail: string } };
+
+// A matter's own stream: its state now, and again whenever it changes.
+export type MatterEvent = { event: "matter"; data: Matter };

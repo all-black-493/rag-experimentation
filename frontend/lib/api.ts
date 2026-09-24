@@ -4,6 +4,7 @@ import type {
   Catalog,
   GraphNeighbourhood,
   Matter,
+  MatterEvent,
   QueryRequest,
   StreamEvent,
   WorkflowAccepted,
@@ -91,6 +92,26 @@ export async function* followRun(jobId: string, signal: AbortSignal): AsyncGener
   });
   if (!response.ok) throw await failure(response);
   yield* readEvents(response, signal);
+}
+
+/**
+ * A matter's state now, then again on every change, until nothing is indexing.
+ *
+ * The server closes the stream when the last document is in, which is the
+ * signal to stop watching - there is nothing further to hear.
+ */
+export async function* followMatter(
+  matterId: string,
+  signal: AbortSignal,
+): AsyncGenerator<Matter> {
+  const response = await fetch(`/api/matters/${matterId}/events`, {
+    headers: { accept: "text/event-stream" },
+    signal,
+  });
+  if (!response.ok) throw await failure(response);
+  for await (const event of readEvents<MatterEvent>(response, signal)) {
+    yield event.data;
+  }
 }
 
 /** Read a matter's documents into a working file; followed like any run. */

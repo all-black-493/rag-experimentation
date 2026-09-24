@@ -175,6 +175,11 @@ class Settings(BaseSettings):
     # short-lived; the LLM cache is process-local.
     embedding_cache_enabled: bool = True
     retrieval_cache_ttl_seconds: float = 300.0
+
+    # An idle SSE stream sends a comment this often. Proxies and load balancers
+    # close a connection that says nothing; a comment is not an event, so no
+    # client handler runs.
+    sse_heartbeat_seconds: float = 20.0
     llm_cache_enabled: bool = True
     # How often the catalog is rebuilt from the database, so an ingest in another
     # process shows up without a restart.

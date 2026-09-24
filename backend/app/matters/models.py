@@ -63,3 +63,8 @@ class Matter(BaseModel):
 
     def document(self, doc_id: str) -> MatterDocument | None:
         return next((d for d in self.documents if d.doc_id == doc_id), None)
+
+    @property
+    def indexing(self) -> bool:
+        """Is a document still on its way in? What a client waits for."""
+        return any(d.status in ("queued", "running") for d in self.documents)

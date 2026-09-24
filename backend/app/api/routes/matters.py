@@ -5,10 +5,12 @@ looking at it; parsing, embedding and indexing run as a job, and the document's
 status on the matter is how the client follows it.
 """
 
+import asyncio
 from functools import partial
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from app.api.schemas import DocumentAccepted, Matter, MatterCreate
 from app.config import get_settings
@@ -17,6 +19,7 @@ from app.dependencies import (
     ClientDep,
     IngestDep,
     JobsDep,
+    MatterEventsDep,
     MatterStoreDep,
     RetrievalCacheDep,
     SettingsDep,
@@ -62,6 +65,33 @@ async def create_matter(payload: MatterCreate, store: MatterStoreDep, client: Cl
 @router.get("/{matter_id}")
 async def get_matter(matter_id: str, store: MatterStoreDep) -> Matter:
     return _require(store, matter_id)
+
+
+@router.get("/{matter_id}/events", response_class=EventSourceResponse)
+async def follow_matter(
+    matter_id: str, store: MatterStoreDep, events: MatterEventsDep, settings: SettingsDep
+):
+    """The matter now, then each time it changes, until nothing is indexing.
+
+    Every write to a matter arrives here, so a client watching an upload sees
+    the status move instead of asking for it. The stream ends when the last
+    document is indexed or has failed - there is nothing further to say, and a
+    browser tab shouldn't hold a connection open to hear it. A comment goes out
+    every few seconds meanwhile, because indexing a long PDF says nothing for
+    minutes and an idle connection gets closed by whatever sits in between.
+    """
+    matter = _require(store, matter_id)
+    with events.watch(matter_id) as changes:
+        yield ServerSentEvent(data=matter, event="matter")
+        while matter.indexing:
+            try:
+                matter = await asyncio.wait_for(
+                    changes.get(), timeout=settings.sse_heartbeat_seconds
+                )
+            except TimeoutError:
+                yield ServerSentEvent(comment="keep-alive")
+                continue
+            yield ServerSentEvent(data=matter, event="matter")
 
 
 @router.delete("/{matter_id}", status_code=204)

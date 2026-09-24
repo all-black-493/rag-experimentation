@@ -10,6 +10,7 @@ from app.caching import TTLCache
 from app.config import Settings, get_settings
 from app.graph.store import Graph
 from app.jobs import JobRegistry
+from app.matters.events import MatterEvents
 from app.matters.store import MatterStore
 from app.retrieval.catalog import Catalog
 from app.workflows.runs import WorkflowRuns
@@ -39,6 +40,10 @@ def get_jobs(request: Request) -> JobRegistry:
     return request.app.state.jobs
 
 
+def get_matter_events(request: Request) -> MatterEvents:
+    return request.app.state.matter_events
+
+
 def get_ingest(request: Request) -> Callable[[str, str], int]:
     """The ingest job for one document: (matter_id, doc_id) -> chunks indexed."""
     return request.app.state.ingest
@@ -63,6 +68,7 @@ CatalogDep = Annotated[Catalog, Depends(get_catalog)]
 CitationGraphDep = Annotated[Graph, Depends(get_citation_graph)]
 ClientDep = Annotated[WeaviateClient, Depends(get_client)]
 MatterStoreDep = Annotated[MatterStore, Depends(get_matter_store)]
+MatterEventsDep = Annotated[MatterEvents, Depends(get_matter_events)]
 JobsDep = Annotated[JobRegistry, Depends(get_jobs)]
 IngestDep = Annotated[Callable[[str, str], int], Depends(get_ingest)]
 RetrievalCacheDep = Annotated[TTLCache, Depends(get_retrieval_cache)]
