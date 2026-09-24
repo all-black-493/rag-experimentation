@@ -124,6 +124,55 @@ export function Workspace() {
   // What the bundle opens onto: a query's citations, or the working file's passages.
   const citations = view === "analysis" ? (analysis.state.analysis?.sources ?? []) : state.citations;
   const bundleOpen = openIndex !== null && citations.some((c) => c.index === openIndex);
+  // Whether there is anything to read yet: what moves the composer down.
+  const started = view === "analysis" || state.phase !== "idle";
+
+  const body =
+    view === "analysis" && matter.current ? (
+      <CaseAnalysisView
+        matterName={matter.current.name}
+        state={analysis.state}
+        activeIndex={bundleOpen ? openIndex : null}
+        onOpen={openAuthority}
+        registerChip={registerChip}
+        onResearch={research}
+      />
+    ) : state.error ? (
+      <p className="max-w-[60ch] text-ink-2">{state.error}</p>
+    ) : state.phase === "idle" ? (
+      <EmptyState
+        mode={mode}
+        onPick={(q) => {
+          setQuestion(q);
+          ask(q);
+        }}
+      />
+    ) : state.mode !== "search" ? (
+      <AnswerView
+        phase={state.phase}
+        draft={state.draft}
+        result={state.result}
+        citations={state.citations}
+        activeIndex={bundleOpen ? openIndex : null}
+        onOpen={openAuthority}
+        registerChip={registerChip}
+      />
+    ) : state.citations.length ? (
+      <AuthorityList
+        citations={state.citations}
+        activeIndex={bundleOpen ? openIndex : null}
+        onOpen={openAuthority}
+        registerChip={registerChip}
+        showPassage
+        heading={`${state.citations.length} passages`}
+      />
+    ) : state.phase === "done" ? (
+      <p className="max-w-[60ch] text-ink-2">
+        Nothing relevant enough was found. Try naming the Act, the court, or the parties.
+      </p>
+    ) : (
+      <SearchSkeleton />
+    );
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -191,7 +240,7 @@ export function Workspace() {
           </h2>
           <div className="px-5 pt-4 pb-8">
             {catalogError ? (
-              <p className="text-sm text-ink-2">Filters unavailable: {catalogError}</p>
+              <p className="text-sm text-ink-3">{catalogError}</p>
             ) : (
               <FilterRail
                 catalog={catalog}
@@ -211,81 +260,58 @@ export function Workspace() {
           />
         )}
 
-        <main className="min-w-0 px-4 pt-5 pb-28 md:px-8 lg:px-10 lg:pb-16">
-          <div className="mx-auto max-w-[76ch]">
-            <QueryComposer
-              value={question}
-              onChange={setQuestion}
-              mode={mode}
-              onModeChange={setMode}
-              busy={busy}
-              onSubmit={ask}
-              onCancel={cancel}
-            />
-
-            <div className="mt-3">
-              <PlanStrip
-                phase={state.phase}
-                mode={state.mode}
-                plan={state.plan}
-                retrieval={state.retrieval}
-                reviews={state.reviews}
-                courtNames={courtNames}
-                grounded={state.result?.grounded}
-              />
-            </div>
-
-            <div className="mt-6">
-              {view === "analysis" && matter.current ? (
-                <CaseAnalysisView
-                  matterName={matter.current.name}
-                  state={analysis.state}
-                  activeIndex={bundleOpen ? openIndex : null}
-                  onOpen={openAuthority}
-                  registerChip={registerChip}
-                  onResearch={research}
-                />
-              ) : state.error ? (
-                <p className="max-w-[60ch] border-l border-rule-2 pl-4 text-ink-2">
-                  The query failed: {state.error}. Try again in a moment.
-                </p>
-              ) : state.phase === "idle" ? (
-                <EmptyState
-                  mode={mode}
-                  catalog={catalog}
-                  onPick={(q) => {
-                    setQuestion(q);
-                    ask(q);
-                  }}
-                />
-              ) : state.mode !== "search" ? (
-                <AnswerView
+        {/*
+          Before the first question the composer is the page: it sits in the
+          middle with the examples under it. Once there is something to read,
+          it moves to the foot and stays there, so the answer occupies the
+          page and the next question is where a next question belongs.
+        */}
+        <main
+          className={[
+            "flex min-w-0 flex-col px-4 md:px-8 lg:px-10",
+            started ? "pb-4 pt-5" : "justify-center pb-16 pt-5",
+          ].join(" ")}
+        >
+          {started ? (
+            <>
+              <div className="mx-auto w-full max-w-[76ch] flex-1">
+                <PlanStrip
                   phase={state.phase}
-                  draft={state.draft}
-                  result={state.result}
-                  citations={state.citations}
-                  activeIndex={bundleOpen ? openIndex : null}
-                  onOpen={openAuthority}
-                  registerChip={registerChip}
+                  mode={state.mode}
+                  plan={state.plan}
+                  retrieval={state.retrieval}
+                  reviews={state.reviews}
+                  courtNames={courtNames}
+                  grounded={state.result?.grounded}
                 />
-              ) : state.citations.length ? (
-                <AuthorityList
-                  citations={state.citations}
-                  activeIndex={bundleOpen ? openIndex : null}
-                  onOpen={openAuthority}
-                  registerChip={registerChip}
-                  showPassage
-                  heading={`${state.citations.length} passages`}
+                <div className="mt-4">{body}</div>
+              </div>
+              <div className="sticky bottom-0 mx-auto mt-6 w-full max-w-[76ch] bg-paper pb-4 pt-2">
+                <QueryComposer
+                  value={question}
+                  onChange={setQuestion}
+                  mode={mode}
+                  onModeChange={setMode}
+                  busy={busy}
+                  onSubmit={ask}
+                  onCancel={cancel}
                 />
-              ) : state.phase === "done" ? (
-                <p className="max-w-[60ch] text-ink-2">
-                  Nothing relevant enough was found. Try naming the Act, the court, or the parties.
-                </p>
-              ) : (
-                <SearchSkeleton />
-              )}
+              </div>
+            </>
+          ) : (
+            <div className="mx-auto w-full max-w-[76ch]">
+              <QueryComposer
+                value={question}
+                onChange={setQuestion}
+                mode={mode}
+                onModeChange={setMode}
+                busy={busy}
+                onSubmit={ask}
+                onCancel={cancel}
+              />
+              <div className="mt-5">{body}</div>
             </div>
-          </div>
+          )}
         </main>
 
         {bundleOpen && openIndex !== null && (

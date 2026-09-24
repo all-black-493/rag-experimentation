@@ -1,6 +1,6 @@
 "use client";
 
-import type { Catalog, Mode } from "@/lib/types";
+import type { Mode } from "@/lib/types";
 
 const EXAMPLES: Record<Mode, string[]> = {
   ask: [
@@ -20,53 +20,23 @@ const EXAMPLES: Record<Mode, string[]> = {
   ],
 };
 
-const PURPOSE: Record<Mode, string> = {
-  ask: "An answer built only from Kenyan legislation and judgments, each claim cited to the passage it rests on.",
-  research:
-    "Reads what the first search found, searches again for what it missed and for the other side, and writes a memo.",
-  search: "The passages themselves, ranked, for you to read and cite.",
-};
-
 /**
- * First run. Says what this mode does, and offers questions the corpus can
- * actually answer - a question you can send is worth more than a description
- * of the kind of question you could send.
+ * First run. Questions the corpus can actually answer, ready to send - which
+ * teaches more about what this does than a paragraph describing it would.
  */
-export function EmptyState({
-  mode,
-  catalog,
-  onPick,
-}: {
-  mode: Mode;
-  catalog: Catalog | null;
-  onPick: (q: string) => void;
-}) {
-  const acts = catalog?.collections.find((c) => c.key === "legislation")?.documents;
-  const cases = catalog?.collections.find((c) => c.key === "case_law")?.documents;
-
+export function EmptyState({ mode, onPick }: { mode: Mode; onPick: (q: string) => void }) {
   return (
-    <div>
-      <p className="max-w-[58ch] text-ink-2">
-        {PURPOSE[mode]}
-        {acts && cases && (
-          <span className="text-ink-3">
-            {" "}
-            {acts.toLocaleString()} Acts and {cases.toLocaleString()} judgments indexed.
-          </span>
-        )}
-      </p>
-      <div className="mt-5 grid gap-2 sm:grid-cols-3">
-        {EXAMPLES[mode].map((example) => (
-          <button
-            key={example}
-            type="button"
-            onClick={() => onPick(example)}
-            className="rounded-panel border border-rule bg-paper-2 p-3.5 text-left font-serif text-base leading-snug text-ink-2 transition-colors duration-150 hover:border-rule-2 hover:bg-sheet hover:text-ink"
-          >
-            {example}
-          </button>
-        ))}
-      </div>
+    <div className="grid gap-2 sm:grid-cols-3">
+      {EXAMPLES[mode].map((example) => (
+        <button
+          key={example}
+          type="button"
+          onClick={() => onPick(example)}
+          className="rounded-panel border border-rule bg-paper-2 p-3.5 text-left font-serif text-base leading-snug text-ink-2 transition-colors duration-150 hover:border-rule-2 hover:bg-sheet hover:text-ink"
+        >
+          {example}
+        </button>
+      ))}
     </div>
   );
 }

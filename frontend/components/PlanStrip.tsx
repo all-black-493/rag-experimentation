@@ -24,9 +24,10 @@ const STATUS: Record<Exclude<Phase, "idle" | "done">, string> = {
 };
 
 /**
- * What was consulted, in one line. The mechanism made visible without a
- * dashboard: collections, any court or year restriction, and whether the
- * planner's own restriction had to be relaxed.
+ * Where the work has got to, and what it searched - one line, only while it
+ * has something to say. During a long answer the phase is the only thing a
+ * reader wants; once it is done, the collections it consulted are a fact
+ * worth keeping and everything else was commentary.
  */
 export function PlanStrip({ phase, mode, plan, retrieval, reviews = [], courtNames, grounded }: Props) {
   if (phase === "idle") return null;
@@ -40,43 +41,21 @@ export function PlanStrip({ phase, mode, plan, retrieval, reviews = [], courtNam
         ),
       ) ?? [];
   const consulted = Array.from(new Set(outcomes));
-  const relaxed = retrieval.filter((o) => o.relaxed).length;
+  const verified = phase === "done" && mode !== "search" && grounded === true;
+  const followUps = reviews.flatMap((review) => review.follow_ups.length);
 
   return (
-    <div className="flex min-h-6 flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-xs text-ink-2" role="status" aria-live="polite">
-      {phase !== "done" && (
-        <span className="text-red">{STATUS[phase]}</span>
+    <div
+      className="flex min-h-6 flex-wrap items-baseline gap-x-3 font-mono text-xs text-ink-3"
+      role="status"
+      aria-live="polite"
+    >
+      {phase !== "done" && <span className="text-ink-2">{STATUS[phase]}</span>}
+      {consulted.length > 0 && <span>{consulted.join(" · ")}</span>}
+      {followUps.length > 0 && (
+        <span>{`searched again ${followUps.length === 1 ? "once" : `${followUps.length} times`}`}</span>
       )}
-      {consulted.length > 0 && (
-        <span>
-          <span className="text-ink-3">Consulted</span> {consulted.join(" — ")}
-          {plan && plan.sub_queries.length > 1 && (
-            <span className="text-ink-3"> · {plan.sub_queries.length} queries</span>
-          )}
-        </span>
-      )}
-      {relaxed > 0 && (
-        <span className="text-ink-3">
-          · {relaxed === 1 ? "a restriction was" : `${relaxed} restrictions were`} widened to find enough
-        </span>
-      )}
-      {reviews
-        .filter((review) => review.follow_ups.length > 0)
-        .map((review) => (
-          <span key={review.round}>
-            <span className="text-ink-3">· Pass {review.round + 1}</span>{" "}
-            {review.follow_ups.map((f) => f.reason).join(", ")}
-          </span>
-        ))}
-      {phase === "done" && mode !== "search" && grounded === true && (
-        <span className="text-ok">· verified against its sources</span>
-      )}
-      {plan?.origin === "fallback" && phase === "done" && (
-        <span className="text-ink-3">· planner unavailable, searched everything in scope</span>
-      )}
-      {phase === "done" && mode !== "search" && consulted.length === 0 && (
-        <span className="text-ink-3">Nothing consulted.</span>
-      )}
+      {verified && <span className="text-ok">verified</span>}
     </div>
   );
 }
