@@ -1,21 +1,24 @@
 "use client";
 
-import { SlidersHorizontal, X } from "lucide-react";
+import { PanelLeft, SquarePen } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchCatalog } from "@/lib/api";
 import type { Catalog, Mode, QueryFilters } from "@/lib/types";
+import { type Conversation, useHistory, useSidebarFold } from "@/lib/history";
 import { useAnalysis } from "@/lib/useAnalysis";
 import { useMatter } from "@/lib/useMatter";
-import { useResearch } from "@/lib/useResearch";
+import { type ResearchState, useResearch } from "@/lib/useResearch";
 import { AnswerView } from "./AnswerView";
 import { AuthorityList } from "./AuthorityList";
 import { CaseAnalysisView } from "./CaseAnalysisView";
 import { EmptyState } from "./EmptyState";
 import { FilterRail } from "./FilterRail";
 import { Header } from "./Header";
+import { HistoryList } from "./HistoryList";
 import { MatterRail } from "./MatterRail";
 import { PlanStrip } from "./PlanStrip";
 import { QueryComposer } from "./QueryComposer";
+import { Sidebar, SidebarSection } from "./Sidebar";
 import { SourcePanel } from "./SourcePanel";
 
 const NO_FILTERS: QueryFilters = { collections: [], courts: [], year_from: null, year_to: null };
@@ -35,11 +38,30 @@ export function Workspace() {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const chips = useRef(new Map<number, HTMLButtonElement>());
   const lastOpener = useRef<HTMLButtonElement | null>(null);
-  const { state, submit, cancel } = useResearch();
   const matter = useMatter();
   const current = matter.current;
   const matterId = current?.id ?? null;
   const analysis = useAnalysis();
+  const history = useHistory();
+  const [collapsed, foldSidebar] = useSidebarFold();
+  const { save: saveConversation } = history;
+  const [openConversation, setOpenConversation] = useState<string | null>(null);
+
+  // What a finished run should be filed under, decided when it starts: a
+  // reopened conversation is already in the list, and an errored one is not
+  // worth a place in it.
+  const filing = useRef<{ matterId: string | null; reopened: boolean }>({
+    matterId: null,
+    reopened: false,
+  });
+  const onFinished = useCallback(
+    (finished: ResearchState) => {
+      if (finished.error || filing.current.reopened) return;
+      setOpenConversation(saveConversation(finished.question, finished, filing.current.matterId));
+    },
+    [saveConversation],
+  );
+  const { state, submit, cancel, restore, reset } = useResearch(onFinished);
   const { start: startAnalysis, show: showAnalysis } = analysis;
   const refreshMatter = matter.refresh;
   // The page shows a query's result or the matter's working file, never both.
@@ -59,12 +81,23 @@ export function Workspace() {
 
   const busy = state.phase !== "idle" && state.phase !== "done";
 
+  const toggleSidebar = useCallback(() => {
+    // Below lg the column is a sheet, and the same control opens it.
+    if (window.matchMedia("(max-width: 1023px)").matches) {
+      setRailOpen((wasOpen) => !wasOpen);
+      return;
+    }
+    foldSidebar();
+  }, [foldSidebar]);
+
   // A new query replaces the bundle's contents; an open tab pointing at the
   // previous query's authorities would be a lie.
   const ask = useCallback(
     (text: string) => {
       setOpenIndex(null);
       setView("desk");
+      setOpenConversation(null);
+      filing.current = { matterId, reopened: false };
       submit(text, mode, filters, matterId);
     },
     [submit, mode, filters, matterId],
@@ -95,6 +128,38 @@ export function Workspace() {
       submit(text, "research", filters, matterId);
     },
     [submit, filters, matterId],
+  );
+
+  const newQuestion = useCallback(() => {
+    reset();
+    setQuestion("");
+    setOpenIndex(null);
+    setView("desk");
+    setOpenConversation(null);
+    filing.current = { matterId, reopened: false };
+    setRailOpen(false);
+  }, [reset, matterId]);
+
+  const openConversationAt = useCallback(
+    (conversation: Conversation) => {
+      restore(conversation.state);
+      setQuestion(conversation.state.question);
+      setMode(conversation.state.mode);
+      setOpenIndex(null);
+      setView("desk");
+      setOpenConversation(conversation.id);
+      filing.current = { matterId, reopened: true };
+      setRailOpen(false);
+    },
+    [restore, matterId],
+  );
+
+  const forgetConversation = useCallback(
+    (id: string) => {
+      history.remove(id);
+      if (id === openConversation) newQuestion();
+    },
+    [history, openConversation, newQuestion],
   );
 
   const registerChip = useCallback((index: number, el: HTMLButtonElement | null) => {
@@ -175,100 +240,82 @@ export function Workspace() {
     );
 
   return (
-    <div className="flex min-h-dvh flex-col">
+    <div className="min-h-dvh">
       <Header>
         <button
           type="button"
-          onClick={() => setRailOpen(true)}
-          className="inline-flex min-h-9 items-center gap-2 rounded-control border border-rule-2 px-3 text-sm text-ink-2 hover:text-ink lg:hidden"
-          aria-expanded={railOpen}
-          aria-controls="filter-rail"
+          onClick={toggleSidebar}
+          aria-label={collapsed ? "Show the sidebar" : "Hide the sidebar"}
+          aria-expanded={!collapsed}
+          aria-controls="sidebar"
+          className="press grid size-9 place-items-center rounded-control text-ink-2 transition-colors duration-150 hover:bg-paper-2 hover:text-ink"
         >
-          <SlidersHorizontal size={15} aria-hidden="true" />
-          Filters
+          <PanelLeft size={17} aria-hidden="true" />
         </button>
       </Header>
 
+      <Sidebar collapsed={collapsed} open={railOpen} onClose={() => setRailOpen(false)}>
+        <button
+          type="button"
+          onClick={newQuestion}
+          className="lift inline-flex min-h-9 items-center gap-2 self-start rounded-control border border-rule-2 px-3 text-sm text-ink transition-colors hover:border-ink-3"
+        >
+          <SquarePen size={15} aria-hidden="true" />
+          New question
+        </button>
+
+        <SidebarSection title="History">
+          <HistoryList
+            conversations={history.conversations}
+            currentId={openConversation}
+            onOpen={openConversationAt}
+            onRemove={forgetConversation}
+          />
+        </SidebarSection>
+
+        <SidebarSection title="Matter">
+          <MatterRail
+            matters={matter.matters}
+            current={matter.current}
+            error={matter.error}
+            onSelect={matter.select}
+            onCreate={matter.create}
+            onUpload={matter.upload}
+            onRemove={matter.remove}
+            analysing={analysis.state.phase === "running"}
+            onAnalyse={analyse}
+            onOpenAnalysis={openAnalysis}
+          />
+        </SidebarSection>
+
+        <SidebarSection title="Restrict to">
+          {catalogError ? (
+            <p className="px-2 text-sm text-ink-3">{catalogError}</p>
+          ) : (
+            <FilterRail
+              catalog={catalog}
+              value={filters}
+              onChange={setFilters}
+              matter={matter.current}
+            />
+          )}
+        </SidebarSection>
+      </Sidebar>
+
       {/*
-        Three columns need real width. Below lg the rail is a sheet and the
-        bundle a bottom sheet; from lg the rail is a column and the bundle a
-        drawer over the page; from xl all three sit side by side.
+        The page reserves the column's width rather than the column pushing
+        it: the fold is then one transform on the sidebar and one margin on
+        the page, and the bundle keeps its own place at the right.
       */}
       <div
         className={[
-          "grid flex-1 lg:grid-cols-[260px_minmax(0,1fr)]",
-          bundleOpen ? "xl:grid-cols-[260px_minmax(0,1fr)_minmax(360px,420px)]" : "",
+          "flex min-h-[calc(100dvh-3.5rem)] transition-[margin] duration-300 ease-out-expo motion-reduce:transition-none",
+          collapsed ? "lg:ml-0" : "lg:ml-[280px]",
         ].join(" ")}
       >
-        {/* Filter rail: a column on desktop, a sheet from the left on smaller screens. */}
-        <aside
-          id="filter-rail"
-          className={[
-            "bg-paper-2 lg:static lg:block lg:border-r lg:border-rule",
-            railOpen
-              ? "fixed inset-y-0 left-0 z-40 w-[min(320px,88vw)] overflow-y-auto border-r border-rule-2 shadow-drawer"
-              : "hidden",
-          ].join(" ")}
-        >
-          <div className="flex items-center justify-between px-5 pt-4 lg:pt-6">
-            <h2 className="font-mono text-xs uppercase tracking-[0.08em] text-ink-3">Matter</h2>
-            <button
-              type="button"
-              onClick={() => setRailOpen(false)}
-              aria-label="Close filters"
-              className="grid size-9 place-items-center rounded-control text-ink-2 hover:bg-paper hover:text-ink lg:hidden"
-            >
-              <X size={18} aria-hidden="true" />
-            </button>
-          </div>
-          <div className="px-5 pt-3">
-            <MatterRail
-              matters={matter.matters}
-              current={matter.current}
-              error={matter.error}
-              onSelect={matter.select}
-              onCreate={matter.create}
-              onUpload={matter.upload}
-              onRemove={matter.remove}
-              analysing={analysis.state.phase === "running"}
-              onAnalyse={analyse}
-              onOpenAnalysis={openAnalysis}
-            />
-          </div>
-          <h2 className="px-5 pt-8 font-mono text-xs uppercase tracking-[0.08em] text-ink-3">
-            Restrict to
-          </h2>
-          <div className="px-5 pt-4 pb-8">
-            {catalogError ? (
-              <p className="text-sm text-ink-3">{catalogError}</p>
-            ) : (
-              <FilterRail
-                catalog={catalog}
-                value={filters}
-                onChange={setFilters}
-                matter={matter.current}
-              />
-            )}
-          </div>
-        </aside>
-        {railOpen && (
-          <button
-            type="button"
-            aria-label="Close filters"
-            onClick={() => setRailOpen(false)}
-            className="fixed inset-0 z-30 bg-black/60 lg:hidden"
-          />
-        )}
-
-        {/*
-          Before the first question the composer is the page: it sits in the
-          middle with the examples under it. Once there is something to read,
-          it moves to the foot and stays there, so the answer occupies the
-          page and the next question is where a next question belongs.
-        */}
         <main
           className={[
-            "flex min-w-0 flex-col px-4 md:px-8 lg:px-10",
+            "flex min-w-0 flex-1 flex-col px-4 md:px-8 lg:px-10",
             started ? "pb-4 pt-5" : "justify-center pb-16 pt-5",
           ].join(" ")}
         >

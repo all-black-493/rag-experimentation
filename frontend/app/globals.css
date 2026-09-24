@@ -153,6 +153,72 @@
     }
   }
 
+  /*
+    Microinteractions, adapted from Watermelon UI's animated components
+    (github.com/WatermelonCorp): its accordion reveals content behind a
+    mask-image whose stop travels 0% -> 100% over 350ms easeInOut while the
+    body rises 20px, and its button scales on hover and press. Borrowed as
+    CSS rather than as a motion runtime - this is four transitions, not a
+    reason to ship an animation library into a reading tool.
+
+    The scales are pulled in from Watermelon's 1.05/0.95: a legal desk should
+    acknowledge a press, not bounce at it.
+  */
+  @property --mask-stop {
+    syntax: "<percentage>";
+    inherits: false;
+    initial-value: 0%;
+  }
+
+  .reveal {
+    animation: reveal 350ms ease-in-out both;
+    mask-image: linear-gradient(black var(--mask-stop), transparent var(--mask-stop));
+  }
+  @keyframes reveal {
+    from {
+      --mask-stop: 0%;
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      --mask-stop: 100%;
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .fade-in {
+    animation: fade-in 200ms ease-out both;
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* A press is felt, not watched: the surface gives and comes back. */
+  .press {
+    transition: transform 140ms var(--ease-out-expo);
+  }
+  .press:active {
+    transform: scale(0.985);
+  }
+  .lift {
+    transition:
+      transform 180ms var(--ease-out-expo),
+      border-color 150ms linear,
+      background-color 150ms linear;
+  }
+  .lift:hover {
+    transform: translateY(-1px);
+  }
+  .lift:active {
+    transform: scale(0.99);
+  }
+
   .skeleton {
     background: linear-gradient(
       90deg,
@@ -178,7 +244,18 @@
   .marker--sweep,
   .sheet-enter,
   .drawer-enter,
+  .reveal,
+  .fade-in,
   .skeleton {
     animation: none;
+  }
+  .press,
+  .lift {
+    transition: none;
+  }
+  .press:active,
+  .lift:hover,
+  .lift:active {
+    transform: none;
   }
 }

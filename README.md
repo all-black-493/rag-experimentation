@@ -35,6 +35,51 @@ cd frontend && cp .env.example .env.local && npm install && npm run dev   # :300
 The first ingest takes a couple of hours — embedding is CPU-bound at ~8 chunks/s over ~85k
 chunks — and is idempotent, resumable and cached, so re-runs are minutes.
 
+## How it works
+
+The browser only ever talks to the Next.js app, which proxies to the API and attaches the
+shared secret server-side. Everything the API needs runs beside it.
+
+```mermaid
+flowchart LR
+  B["Browser"] --> P["Next.js proxy"]
+  P --> A["FastAPI · LangGraph"]
+  A --> W[("Weaviate<br/>legislation · case law · matters · citations · summaries")]
+  A --> M["Ollama (qwen3)<br/>or Claude"]
+  A --> E["Embeddings + cross-encoder<br/>in process, on CPU"]
+  A --> D[("Disk<br/>matters, uploads, embedding cache")]
+```
+
+A question takes one path through the graph, and the mode decides where it stops.
+
+```mermaid
+flowchart TD
+  Q["question"] --> PL["plan<br/>one fast-model call, cached"]
+  PL --> R["retrieve<br/>hybrid BM25 + vector, per sub-query, in parallel"]
+  R --> X["expand<br/>citation graph, in memory"]
+  X --> T["topics<br/>summary tree, off until one is built"]
+  T --> RK["rerank<br/>cross-encoder, title with passage"]
+  RK -->|search| OUT["ranked passages"]
+  RK -->|ask| G["generate<br/>cited answer, streamed"]
+  RK -->|research| RV["review<br/>what is missing, and the other side"]
+  RV -->|follow-ups, max 2 rounds| R
+  RV --> G
+  G --> V["verify<br/>grounded? second opinion if not"]
+  V --> OUT2["answer + verdict, or declined"]
+```
+
+Indexing happens before any of that, and costs no model calls except a matter's profile.
+
+```mermaid
+flowchart LR
+  C["corpus rows<br/>800-char windows"] --> DOC["reconstruct documents<br/>lossless, 63,603/63,603"]
+  DOC --> CH["re-chunk<br/>200-token children, parent windows"]
+  CH --> EM["embed"] --> WV[("Weaviate")]
+  CH --> GR["citation graph<br/>regex, 6,537 edges, no model calls"] --> WV
+  U["your upload"] --> PDF["parse to blocks<br/>page + box"] --> CH
+  PDF --> PR["profile<br/>one model call"] --> WV
+```
+
 ## Models
 
 Every model call goes to Ollama by default, so nothing costs anything per call.

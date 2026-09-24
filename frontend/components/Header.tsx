@@ -1,13 +1,16 @@
 import type { ReactNode } from "react";
 
-/** The wordmark, and whatever the page needs beside it. */
+/**
+ * The wordmark, with whatever controls the shell needs beside it. The fold
+ * sits to the left of the name, over the column it folds.
+ */
 export function Header({ children }: { children?: ReactNode }) {
   return (
-    <header className="flex h-14 items-center justify-between border-b border-rule px-4 md:px-6">
+    <header className="sticky top-0 z-50 flex h-14 items-center gap-2 border-b border-rule bg-paper px-2 md:px-3">
+      {children}
       <span className="font-serif text-[1.35rem] leading-none tracking-[-0.02em] text-ink">
         Wakili
       </span>
-      {children}
     </header>
   );
 }

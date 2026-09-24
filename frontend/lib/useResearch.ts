@@ -58,9 +58,13 @@ const INITIAL: ResearchState = {
 };
 
 
-export function useResearch() {
+export function useResearch(onFinished?: (state: ResearchState) => void) {
   const [state, setState] = useState<ResearchState>(INITIAL);
   const controller = useRef<AbortController | null>(null);
+  // Held in a ref so a run that finishes after a re-render still calls the
+  // callback the page has now, not the one it had when the run started.
+  const finished = useRef(onFinished);
+  finished.current = onFinished;
 
   const cancel = useCallback(() => {
     controller.current?.abort();
@@ -74,7 +78,17 @@ export function useResearch() {
       cancel();
       const current = new AbortController();
       controller.current = current;
-      setState({ ...INITIAL, phase: "planning", question, mode });
+      // Mirrors what the page is showing, so the finished run can be handed
+      // over whole without reading state through a stale closure.
+      let latest: ResearchState = { ...INITIAL, phase: "planning", question, mode };
+      // The accumulator is authoritative and React mirrors it, not the other
+      // way round: an updater runs when React chooses to, so reading the
+      // finished run out of one would read whatever had been applied so far.
+      const update = (next: (s: ResearchState) => ResearchState) => {
+        latest = next(latest);
+        setState(latest);
+      };
+      setState(latest);
 
       try {
         const request: QueryRequest = { question, mode, filters, matter_id: matterId };
@@ -82,29 +96,29 @@ export function useResearch() {
           if (current.signal.aborted) return;
           switch (event.event) {
             case "plan":
-              setState((s) => ({ ...s, phase: "searching", plan: event.data.plan }));
+              update((s) => ({ ...s, phase: "searching", plan: event.data.plan }));
               break;
             case "sources":
-              setState((s) => ({
+              update((s) => ({
                 ...s,
                 citations: event.data.citations,
                 phase: mode === "search" ? s.phase : mode === "research" ? "reviewing" : "answering",
               }));
               break;
             case "review":
-              setState((s) => ({
+              update((s) => ({
                 ...s,
                 reviews: [...s.reviews, event.data],
                 phase: event.data.another_pass ? "searching" : "answering",
               }));
               break;
             case "token":
-              setState((s) => ({ ...s, phase: "answering", draft: s.draft + event.data.text }));
+              update((s) => ({ ...s, phase: "answering", draft: s.draft + event.data.text }));
               break;
             case "done":
               // The answer is final. In ask mode the verifier is still running;
               // the reader can start now rather than wait for its verdict.
-              setState((s) => ({
+              update((s) => ({
                 ...s,
                 phase: mode !== "search" && event.data.citations.length ? "verifying" : "done",
                 result: event.data,
@@ -115,7 +129,7 @@ export function useResearch() {
               }));
               break;
             case "verdict":
-              setState((s) => ({
+              update((s) => ({
                 ...s,
                 phase: "done",
                 withdrawn: event.data.withdrawn,
@@ -134,6 +148,7 @@ export function useResearch() {
               throw new Error(event.data.detail);
           }
         }
+        if (!current.signal.aborted) finished.current?.(latest);
       } catch (error) {
         if (current.signal.aborted) return;
         setState((s) => ({
@@ -146,7 +161,22 @@ export function useResearch() {
     [cancel],
   );
 
-  return { state, submit, cancel };
+  /** Put a finished conversation back on the page, without asking again. */
+  const restore = useCallback(
+    (previous: ResearchState) => {
+      cancel();
+      setState(previous);
+    },
+    [cancel],
+  );
+
+  /** Back to an empty desk. */
+  const reset = useCallback(() => {
+    cancel();
+    setState(INITIAL);
+  }, [cancel]);
+
+  return { state, submit, cancel, restore, reset };
 }
 
 /** A query streams from one request; a research run is started, then followed. */
